@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 
 function App() {
   const [bhajans, setBhajans] = useState([
@@ -95,7 +95,6 @@ function App() {
   const [extractedText, setExtractedText] = useState('');
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const fileInputRef = useRef(null);
   const [voiceSearchActive, setVoiceSearchActive] = useState(false);
   const [voiceSearchSupported, setVoiceSearchSupported] = useState(false);
   const recognitionRef = useRef(null);
@@ -281,32 +280,6 @@ function App() {
     window.open(url, '_blank');
   };
 
-  const shareToTelegram = (bhajan) => {
-    const text = encodeURIComponent(formatBhajanForSharing(bhajan));
-    const url = `https://t.me/share/url?url=&text=${text}`;
-    window.open(url, '_blank');
-  };
-
-  const shareToEmail = (bhajan) => {
-    const subject = encodeURIComponent(`🕉️ ${bhajan.title} - Sacred Bhajan`);
-    const body = encodeURIComponent(formatBhajanForSharing(bhajan));
-    const url = `mailto:?subject=${subject}&body=${body}`;
-    window.open(url);
-  };
-
-  const shareToTwitter = (bhajan) => {
-    // Twitter has character limits, so we'll share a shortened version
-    const text = encodeURIComponent(`🕉️ ${bhajan.title}\n\n"${bhajan.lyrics.slice(0, 100)}..."\n\n#Bhajan #Spirituality #Devotion`);
-    const url = `https://twitter.com/intent/tweet?text=${text}`;
-    window.open(url, '_blank');
-  };
-
-  const shareToFacebook = (bhajan) => {
-    const text = encodeURIComponent(formatBhajanForSharing(bhajan));
-    const url = `https://www.facebook.com/sharer/sharer.php?quote=${text}`;
-    window.open(url, '_blank');
-  };
-
   const copyToClipboard = async (bhajan) => {
     try {
       await navigator.clipboard.writeText(formatBhajanForSharing(bhajan));
@@ -368,11 +341,11 @@ function App() {
       // Emotions and States
       'love': 'love', 'devotion': 'devotion', 'peace': 'peace', 'joy': 'joy',
       'bhakti': 'bhakti', 'surrender': 'surrender', 'prayer': 'prayer',
-      'meditation': 'meditation', 'worship': 'worship', 'divine': 'divine',
+      'meditation': 'meditation', 'divine': 'divine',
       
       // Actions
       'sing': 'singing', 'chant': 'chanting', 'dance': 'dancing', 'pray': 'prayer',
-      'meditate': 'meditation', 'worship': 'worship', 'praise': 'praise',
+      'meditate': 'meditation', 'praise': 'praise',
       
       // Spiritual Concepts
       'sacred': 'sacred', 'holy': 'holy', 'blessed': 'blessed', 'eternal': 'eternal',
@@ -411,7 +384,6 @@ function App() {
       const category = bhajan.category.toLowerCase();
       if (category === 'aarti') {
         keywordCounts['aarti'] = (keywordCounts['aarti'] || 0) + 3;
-        keywordCounts['worship'] = (keywordCounts['worship'] || 0) + 2;
       } else if (category === 'mantra') {
         keywordCounts['mantra'] = (keywordCounts['mantra'] || 0) + 3;
         keywordCounts['chanting'] = (keywordCounts['chanting'] || 0) + 2;
@@ -430,7 +402,6 @@ function App() {
       if (deity.includes('krishna')) {
         keywordCounts['love'] = (keywordCounts['love'] || 0) + 2;
         keywordCounts['joy'] = (keywordCounts['joy'] || 0) + 1;
-        keywordCounts['flute'] = (keywordCounts['flute'] || 0) + 1;
       } else if (deity.includes('rama')) {
         keywordCounts['righteousness'] = (keywordCounts['righteousness'] || 0) + 1;
         keywordCounts['courage'] = (keywordCounts['courage'] || 0) + 1;
@@ -464,57 +435,6 @@ function App() {
     return extractedKeywords.filter(keyword => 
       !currentKeywords.includes(keyword.toLowerCase())
     );
-  };
-
-  // Mood detection and analysis
-  const detectMood = (bhajan) => {
-    const text = `${bhajan.title} ${bhajan.lyrics} ${bhajan.keywords || ''}`.toLowerCase();
-    const moodKeywords = {
-      'peaceful': ['peace', 'calm', 'serene', 'tranquil', 'quiet', 'stillness', 'harmony', 'gentle'],
-      'joyful': ['joy', 'happy', 'celebration', 'festival', 'dance', 'laughter', 'bliss', 'cheerful'],
-      'devotional': ['devotion', 'bhakti', 'surrender', 'prayer', 'worship', 'reverent', 'sacred', 'holy'],
-      'contemplative': ['meditation', 'contemplation', 'reflection', 'wisdom', 'knowledge', 'truth', 'deep'],
-      'uplifting': ['uplifting', 'inspiring', 'encouraging', 'hope', 'light', 'bright', 'positive'],
-      'loving': ['love', 'compassion', 'mercy', 'kindness', 'grace', 'blessing', 'care', 'affection'],
-      'surrendering': ['surrender', 'humble', 'submission', 'gratitude', 'thankfulness', 'offering']
-    };
-
-    // Count mood indicators
-    const moodScores = {};
-    Object.entries(moodKeywords).forEach(([mood, keywords]) => {
-      moodScores[mood] = keywords.filter(keyword => text.includes(keyword)).length;
-    });
-
-    // Add context-based mood detection
-    if (bhajan.deity) {
-      const deity = bhajan.deity.toLowerCase();
-      if (deity.includes('krishna') || deity.includes('gopal')) moodScores['joyful'] += 2;
-      if (deity.includes('shiva')) moodScores['contemplative'] += 2;
-      if (deity.includes('rama')) moodScores['uplifting'] += 2;
-      if (deity.includes('hanuman')) moodScores['devotional'] += 2;
-    }
-
-    if (bhajan.category) {
-      const category = bhajan.category.toLowerCase();
-      if (category === 'aarti') moodScores['devotional'] += 3;
-      if (category === 'mantra') moodScores['peaceful'] += 3;
-      if (category === 'bhajan') moodScores['loving'] += 2;
-    }
-
-    // Return the mood with highest score
-    const topMood = Object.entries(moodScores)
-      .filter(([_, score]) => score > 0)
-      .sort((a, b) => b[1] - a[1])[0];
-
-    return topMood ? topMood[0].charAt(0).toUpperCase() + topMood[0].slice(1) : 'Devotional';
-  };
-
-  // Auto-update mood when bhajan data changes
-  const autoUpdateMood = (bhajanData) => {
-    if (!bhajanData.mood || bhajanData.mood.trim() === '') {
-      return detectMood(bhajanData);
-    }
-    return bhajanData.mood;
   };
 
   // Auto-generate keywords if empty
@@ -593,6 +513,7 @@ function App() {
       mostCommonCategory
     };
   };
+
   const cleanTitle = (title) => {
     return title
       .replace(/[^\u0900-\u097F\u0020-\u007E]/g, ' ') // Keep Devanagari, basic Latin, and spaces
@@ -794,14 +715,6 @@ function App() {
     setActiveView('home');
     setShowUpload(false);
     setSelectedBhajan(null);
-    setShowMenu(false);
-  };
-
-  const navigateToAdd = () => {
-    setActiveView('add');
-    setShowUpload(true);
-    setSelectedBhajan(null);
-    setEditingBhajan(null);
     setShowMenu(false);
   };
 
@@ -2180,43 +2093,6 @@ function App() {
                         )}
                       </div>
                     </div>
-
-                    {/* Index view specific layout */}
-                    {activeView === 'index' && (
-                      <div className="p-4 bg-gray-50 border-t">
-                        <div className="grid grid-cols-2 gap-4 text-sm">
-                          <div>
-                            <span className="font-medium text-gray-600">Scale:</span>
-                            <span className="ml-2 text-gray-800">{bhajan.scale || 'Not specified'}</span>
-                          </div>
-                          <div>
-                            <span className="font-medium text-gray-600">Source:</span>
-                            <span className="ml-2 text-gray-800">{bhajan.source || 'Traditional'}</span>
-                          </div>
-
-                          {/* Keywords preview */}
-                          {bhajan.keywords && (
-                            <div className="mt-4">
-                              <div className="flex flex-wrap gap-1">
-                                {bhajan.keywords.split(',').slice(0, 3).map((keyword, idx) => (
-                                  <span 
-                                    key={idx}
-                                    className="text-xs bg-orange-50 text-orange-700 px-2 py-1 rounded-full font-medium"
-                                  >
-                                    {keyword.trim()}
-                                  </span>
-                                ))}
-                                {bhajan.keywords.split(',').length > 3 && (
-                                  <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
-                                    +{bhajan.keywords.split(',').length - 3} more
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>
