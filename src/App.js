@@ -1,6 +1,13 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 
 function App() {
+  // Auto-sync state
+  const [autoExportEnabled, setAutoExportEnabled] = useState(true);
+  const [lastAutoExport, setLastAutoExport] = useState(null);
+  const [driveFileDetected, setDriveFileDetected] = useState(false);
+  const [syncInstructions, setSyncInstructions] = useState(false);
+  const fileInputRef = useRef(null);
+
   // Load bhajans from localStorage or use defaults
   const getInitialBhajans = () => {
     try {
@@ -14,7 +21,6 @@ function App() {
       console.error('Error loading bhajans from localStorage:', error);
     }
     
-    // Return default bhajans if nothing saved
     return [
       {
         id: 1,
@@ -118,6 +124,10 @@ function App() {
   const [showCamera, setShowCamera] = useState(false);
   const [cameraStream, setCameraStream] = useState(null);
   
+  // Scale editing state
+  const [editingScale, setEditingScale] = useState(false);
+  const [tempScale, setTempScale] = useState('');
+  
   const [newBhajan, setNewBhajan] = useState({
     title: '',
     lyrics: '',
@@ -130,20 +140,173 @@ function App() {
     source: ''
   });
 
-  // Save bhajans to localStorage whenever bhajans array changes
+  // Auto-export function
+  const autoExportToDownloads = useCallback((bhajanData) => {
+    if (!autoExportEnabled) return;
+    
+    try {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `babosa-sankirtan-sync-${timestamp}.json`;
+      
+      const dataStr = JSON.stringify({
+        timestamp: new Date().toISOString(),
+        device: navigator.userAgent.includes('Mobile') ? 'mobile' : 'desktop',
+        bhajans: bhajanData,
+        version: '2.0.0'
+      }, null, 2);
+      
+      const dataBlob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(dataBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      setLastAutoExport(new Date());
+      console.log('Auto-exported bhajans to Downloads:', filename);
+    } catch (error) {
+      console.error('Auto-export failed:', error);
+    }
+  }, [autoExportEnabled]);
+
+  // Save to localStorage and auto-export
   useEffect(() => {
     try {
       localStorage.setItem('babosa-sankirtan-bhajans', JSON.stringify(bhajans));
       console.log('Saved', bhajans.length, 'bhajans to localStorage');
+      
+      // Auto-export when data changes (debounced)
+      const exportTimer = setTimeout(() => {
+        autoExportToDownloads(bhajans);
+      }, 2000); // Wait 2 seconds after last change
+      
+      return () => clearTimeout(exportTimer);
     } catch (error) {
-      console.error('Error saving bhajans to localStorage:', error);
+      console.error('Error saving bhajans:', error);
       if (error.name === 'QuotaExceededError') {
         alert('Storage limit reached. Please export your bhajans as backup and clear some data.');
       }
     }
-  }, [bhajans]);
+  }, [bhajans, autoExportToDownloads]);
 
-  // Export bhajans to JSON file for backup
+  // Check for Google Drive sync files
+  const checkForDriveUpdates = () => {
+    // Trigger file input to check for Drive sync file
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  // Handle Drive sync file upload
+  const handleDriveSyncFile = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const driveData = JSON.parse(e.target.result);
+        
+        // Validate sync file format
+        if (driveData.bhajans && Array.isArray(driveData.bhajans)) {
+          const driveBhajans = driveData.bhajans;
+          const localBhajans = bhajans;
+          
+          // Smart merge: combine both datasets
+          const mergedData = mergeBhajanData(localBhajans, driveBhajans);
+          
+          if (mergedData.length > bhajans.length) {
+            setBhajans(mergedData);
+            setDriveFileDetected(true);
+            alert(`✅ Sync successful! Added ${mergedData.length - bhajans.length} new bhajans from Google Drive.`);
+          } else if (mergedData.length === bhajans.length) {
+            alert('✅ Sync complete! Your data is already up to date.');
+          } else {
+            setBhajans(mergedData);
+            alert('✅ Sync successful! Data synchronized with Google Drive.');
+          }
+        } else {
+          alert('❌ Invalid sync file format. Please select a valid babosa-sankirtan-sync file.');
+        }
+      } catch (error) {
+        console.error('Drive sync error:', error);
+        alert('❌ Failed to sync with Google Drive. Please check the file and try again.');
+      }
+    };
+    reader.readAsText(file);
+    event.target.value = '';
+  };
+
+  // Smart merge function
+  const mergeBhajanData = (localData, driveData) => {
+    const mergedMap = new Map();
+    
+    // Add all local bhajans
+    localData.forEach(bhajan => {
+      mergedMap.set(bhajan.id, bhajan);
+    });
+    
+    // Add/update with drive bhajans (prioritize newer lastViewed)
+    driveData.forEach(driveBhajan => {
+      const localBhajan = mergedMap.get(driveBhajan.id);
+      
+      if (!localBhajan) {
+        // New bhajan from drive
+        mergedMap.set(driveBhajan.id, driveBhajan);
+      } else {
+        // Merge existing: use most recent lastViewed
+        const localTime = new Date(localBhajan.lastViewed || 0);
+        const driveTime = new Date(driveBhajan.lastViewed || 0);
+        
+        if (driveTime > localTime) {
+          mergedMap.set(driveBhajan.id, {
+            ...localBhajan,
+            ...driveBhajan,
+            viewCount: Math.max(localBhajan.viewCount || 0, driveBhajan.viewCount || 0)
+          });
+        }
+      }
+    });
+    
+    return Array.from(mergedMap.values()).sort((a, b) => a.id - b.id);
+  };
+
+  // Manual export for Google Drive
+  const exportForDrive = () => {
+    try {
+      const timestamp = new Date().toISOString();
+      const filename = `babosa-sankirtan-sync-${timestamp.split('T')[0]}.json`;
+      
+      const syncData = {
+        timestamp,
+        device: navigator.userAgent.includes('Mobile') ? 'mobile' : 'desktop',
+        bhajans: bhajans,
+        version: '2.0.0',
+        instructions: 'Upload this file to your Google Drive, then download on other devices to sync'
+      };
+      
+      const dataStr = JSON.stringify(syncData, null, 2);
+      const dataBlob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(dataBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+      
+      setSyncInstructions(true);
+      alert(`📁 Sync file created! Upload "${filename}" to Google Drive for cross-device sync.`);
+    } catch (error) {
+      console.error('Export error:', error);
+      alert('Failed to create sync file. Please try again.');
+    }
+  };
+
+  // Regular export bhajans
   const exportBhajans = () => {
     try {
       const dataStr = JSON.stringify(bhajans, null, 2);
@@ -170,9 +333,13 @@ function App() {
     reader.onload = (e) => {
       try {
         const importedData = JSON.parse(e.target.result);
-        if (Array.isArray(importedData) && importedData.length > 0) {
+        
+        // Handle both regular backup and sync file formats
+        const bhajanArray = importedData.bhajans || importedData;
+        
+        if (Array.isArray(bhajanArray) && bhajanArray.length > 0) {
           const existingTitles = new Set(bhajans.map(b => b.title.toLowerCase()));
-          const newBhajans = importedData.filter(b => 
+          const newBhajans = bhajanArray.filter(b => 
             b.title && b.lyrics && !existingTitles.has(b.title.toLowerCase())
           );
           
@@ -457,6 +624,27 @@ function App() {
     alert(`Bhajan ${editingBhajan ? 'updated' : 'saved'} successfully! 🎉`);
   };
 
+  // Scale editing functions
+  const startEditingScale = () => {
+    setTempScale(selectedBhajan?.scale || '');
+    setEditingScale(true);
+  };
+
+  const saveScale = () => {
+    if (selectedBhajan) {
+      const updatedBhajan = { ...selectedBhajan, scale: tempScale };
+      setBhajans(prev => prev.map(b => b.id === selectedBhajan.id ? updatedBhajan : b));
+      setSelectedBhajan(updatedBhajan);
+      setEditingScale(false);
+      setTempScale('');
+    }
+  };
+
+  const cancelScaleEdit = () => {
+    setEditingScale(false);
+    setTempScale('');
+  };
+
   const deleteBhajan = (id) => {
     if (window.confirm('Are you sure you want to delete this bhajan?')) {
       setBhajans(prev => prev.filter(b => b.id !== id));
@@ -540,6 +728,7 @@ function App() {
     if (bhajan.author) shareText += `✍️ Author: ${bhajan.author}\n`;
     if (bhajan.deity) shareText += `🙏 Deity: ${bhajan.deity}\n`;
     if (bhajan.category) shareText += `📖 Category: ${bhajan.category}\n`;
+    if (bhajan.scale) shareText += `🎵 Scale: ${bhajan.scale}\n`;
     shareText += `\n🕉️ Shared from बाबोसा संकीर्तन (Babosa Sankirtan)`;
     
     const text = encodeURIComponent(shareText);
@@ -553,6 +742,7 @@ function App() {
     if (bhajan.author) shareText += `✍️ Author: ${bhajan.author}\n`;
     if (bhajan.deity) shareText += `🙏 Deity: ${bhajan.deity}\n`;
     if (bhajan.category) shareText += `📖 Category: ${bhajan.category}\n`;
+    if (bhajan.scale) shareText += `🎵 Scale: ${bhajan.scale}\n`;
     shareText += `\n🕉️ Shared from बाबोसा संकीर्तन (Babosa Sankirtan)`;
     
     try {
@@ -578,7 +768,8 @@ function App() {
         (bhajan.deity && bhajan.deity.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (bhajan.author && bhajan.author.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (bhajan.keywords && bhajan.keywords.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (bhajan.category && bhajan.category.toLowerCase().includes(searchTerm.toLowerCase()));
+        (bhajan.category && bhajan.category.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (bhajan.scale && bhajan.scale.toLowerCase().includes(searchTerm.toLowerCase()));
       
       const matchesCategory = filterCategory === '' || bhajan.category === filterCategory;
       const matchesDeity = filterDeity === '' || bhajan.deity === filterDeity;
@@ -587,6 +778,25 @@ function App() {
       return matchesSearch && matchesCategory && matchesDeity && matchesMood;
     });
   }, [bhajans, searchTerm, filterCategory, filterDeity, filterMood]);
+
+  // Auto-sync status component
+  const SyncStatusDisplay = () => {
+    return (
+      <div className="flex items-center text-xs">
+        <span className="mr-1">
+          {autoExportEnabled ? '📤' : '📱'}
+        </span>
+        <span className="text-green-600">
+          {autoExportEnabled 
+            ? lastAutoExport 
+              ? `Auto-exported ${lastAutoExport.toLocaleTimeString()}`
+              : 'Auto-export enabled'
+            : 'Local only'
+          }
+        </span>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-red-50 relative overflow-hidden">
@@ -619,6 +829,20 @@ function App() {
             </div>
             
             <div className="flex items-center space-x-4">
+              {/* Sync Status */}
+              <SyncStatusDisplay />
+
+              {/* Check Drive Updates Button */}
+              <button
+                onClick={checkForDriveUpdates}
+                className="p-2 hover:bg-orange-100 text-orange-600 rounded-lg transition-colors"
+                title="Check Google Drive for updates"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+
               {/* Voice search button */}
               {voiceSearchSupported && (
                 <button
@@ -654,7 +878,16 @@ function App() {
         </div>
       </div>
 
-      {/* Sidebar Menu - DESKTOP FIX: Removed lg:hidden */}
+      {/* Hidden file input for Drive sync */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json"
+        onChange={handleDriveSyncFile}
+        className="hidden"
+      />
+
+      {/* Sidebar Menu */}
       {showMenu && (
         <div className="fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/50" onClick={() => setShowMenu(false)} />
@@ -667,6 +900,7 @@ function App() {
                   <div>
                     <h3 className="font-bold text-amber-900">बाबोसा संकीर्तन</h3>
                     <p className="text-sm text-amber-600">{bhajans.length} भजन संग्रह</p>
+                    <SyncStatusDisplay />
                   </div>
                 </div>
                 <button
@@ -713,6 +947,53 @@ function App() {
                 <span className="font-semibold">Upload Bhajan</span>
               </button>
 
+              {/* Google Drive Sync Section */}
+              <div className="pt-4 border-t border-orange-200">
+                <h4 className="text-sm font-semibold text-amber-700 mb-3 px-4">☁️ Google Drive Sync</h4>
+                
+                <button
+                  onClick={exportForDrive}
+                  className="w-full flex items-center p-3 rounded-lg hover:bg-orange-100 text-amber-800 transition-colors"
+                >
+                  <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                  </svg>
+                  <span className="text-sm font-medium">Create Sync File</span>
+                </button>
+
+                <button
+                  onClick={checkForDriveUpdates}
+                  className="w-full flex items-center p-3 rounded-lg hover:bg-orange-100 text-amber-800 transition-colors"
+                >
+                  <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  <span className="text-sm font-medium">Load from Drive</span>
+                </button>
+
+                <div className="p-3 rounded-lg bg-blue-50 border border-blue-200">
+                  <p className="text-xs text-blue-700 mb-2">
+                    <strong>📱→☁️→📱 Cross-Device Sync:</strong>
+                  </p>
+                  <ol className="text-xs text-blue-600 space-y-1">
+                    <li>1. Click "Create Sync File"</li>
+                    <li>2. Upload file to Google Drive</li>
+                    <li>3. Download on other device</li>
+                    <li>4. Click "Load from Drive"</li>
+                  </ol>
+                </div>
+
+                <label className="flex items-center p-2 text-amber-700">
+                  <input
+                    type="checkbox"
+                    checked={autoExportEnabled}
+                    onChange={(e) => setAutoExportEnabled(e.target.checked)}
+                    className="mr-2"
+                  />
+                  <span className="text-xs">Auto-export to Downloads</span>
+                </label>
+              </div>
+
               {/* Data Management Section */}
               <div className="pt-4 border-t border-orange-200">
                 <h4 className="text-sm font-semibold text-amber-700 mb-3 px-4">📁 Data Management</h4>
@@ -755,11 +1036,44 @@ function App() {
         </div>
       )}
 
+      {/* Sync Instructions Modal */}
+      {syncInstructions && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-bold text-amber-900 mb-4">☁️ Google Drive Sync Instructions</h3>
+            
+            <div className="space-y-4 text-sm text-gray-700">
+              <div className="bg-blue-50 p-3 rounded-lg">
+                <p className="font-semibold text-blue-800 mb-2">📱 To sync to other devices:</p>
+                <ol className="space-y-1 text-blue-700">
+                  <li>1. Upload the downloaded file to Google Drive</li>
+                  <li>2. On other device, download the file</li>
+                  <li>3. Open the app and click "Load from Drive"</li>
+                  <li>4. Select the downloaded sync file</li>
+                </ol>
+              </div>
+              
+              <div className="bg-green-50 p-3 rounded-lg">
+                <p className="font-semibold text-green-800 mb-1">💡 Pro Tip:</p>
+                <p className="text-green-700">Enable "Auto-export" to automatically backup your bhajans to Downloads folder.</p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setSyncInstructions(false)}
+              className="w-full bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-semibold transition-colors mt-4"
+            >
+              Got it!
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Content */}
       <div className="relative z-10 max-w-6xl mx-auto px-4 py-8">
         
         {selectedBhajan ? (
-          /* Individual Bhajan View */
+          /* Individual Bhajan View with Scale Editing */
           <div>
             <div className="mb-6">
               <button
@@ -793,7 +1107,88 @@ function App() {
                       💭 {selectedBhajan.mood}
                     </span>
                   )}
+                  
+                  {/* Scale Badge with Edit Option */}
+                  {selectedBhajan.scale && (
+                    <div className="flex items-center bg-yellow-100 text-yellow-800 px-4 py-2 rounded-full text-sm font-medium">
+                      <span className="mr-2">🎵 {selectedBhajan.scale}</span>
+                      <button
+                        onClick={startEditingScale}
+                        className="text-yellow-600 hover:text-yellow-800 ml-1"
+                        title="Edit Scale"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Add Scale Button if no scale exists */}
+                  {!selectedBhajan.scale && (
+                    <button
+                      onClick={startEditingScale}
+                      className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-full text-sm font-medium transition-colors"
+                    >
+                      + Add Scale
+                    </button>
+                  )}
                 </div>
+
+                {/* Scale Editing Modal */}
+                {editingScale && (
+                  <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+                    <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4">
+                      <h3 className="text-lg font-bold text-amber-900 mb-4">🎵 Edit Scale/Raag</h3>
+                      
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Scale/Raag Name
+                          </label>
+                          <input
+                            type="text"
+                            value={tempScale}
+                            onChange={(e) => setTempScale(e.target.value)}
+                            className="w-full px-4 py-2 border-2 border-orange-200 rounded-lg focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
+                            placeholder="e.g., Raag Yaman, C Major, Bhairav, etc."
+                            autoFocus
+                          />
+                        </div>
+
+                        <div className="text-xs text-gray-600">
+                          <p className="mb-2">Popular scales:</p>
+                          <div className="flex flex-wrap gap-2">
+                            {['Raag Yaman', 'Raag Bhairav', 'Raag Kafi', 'Raag Bhimpalasi', 'C Major', 'G Major', 'D Major', 'Traditional', 'Free Style'].map(scale => (
+                              <button
+                                key={scale}
+                                onClick={() => setTempScale(scale)}
+                                className="px-2 py-1 bg-orange-100 hover:bg-orange-200 text-orange-800 text-xs rounded transition-colors"
+                              >
+                                {scale}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3 mt-6">
+                        <button
+                          onClick={saveScale}
+                          className="flex-1 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-semibold transition-colors"
+                        >
+                          ✓ Save
+                        </button>
+                        <button
+                          onClick={cancelScaleEdit}
+                          className="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded-lg font-semibold transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {selectedBhajan.author && (
                   <p className="text-amber-700 font-medium mb-4">✍️ {selectedBhajan.author}</p>
@@ -1053,6 +1448,22 @@ function App() {
 
                       <div>
                         <label className="block text-sm font-semibold text-amber-800 mb-2">
+                          Scale/Raag 🎵
+                        </label>
+                        <input
+                          type="text"
+                          value={editingBhajan ? editingBhajan.scale : newBhajan.scale}
+                          onChange={(e) => editingBhajan ?
+                            setEditingBhajan(prev => ({...prev, scale: e.target.value})) :
+                            setNewBhajan(prev => ({...prev, scale: e.target.value}))
+                          }
+                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
+                          placeholder="Raag Yaman, C Major, Bhairav, etc."
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-amber-800 mb-2">
                           Mood 💭
                         </label>
                         <select
@@ -1243,6 +1654,11 @@ function App() {
                         {bhajan.mood && (
                           <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-xs font-medium">
                             💭 {bhajan.mood}
+                          </span>
+                        )}
+                        {bhajan.scale && (
+                          <span className="bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-xs font-medium">
+                            🎵 {bhajan.scale}
                           </span>
                         )}
                       </div>
