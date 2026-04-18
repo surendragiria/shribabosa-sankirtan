@@ -109,14 +109,12 @@ function App() {
   const [filterMood, setFilterMood] = useState('');
   const [editingBhajan, setEditingBhajan] = useState(null);
   const [extractedText, setExtractedText] = useState('');
-  const [uploadedFiles, setUploadedFiles] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [voiceSearchActive, setVoiceSearchActive] = useState(false);
   const [voiceSearchSupported, setVoiceSearchSupported] = useState(false);
   const recognitionRef = useRef(null);
   const [showMenu, setShowMenu] = useState(false);
   const [activeView, setActiveView] = useState('home');
-  const [searchHistory, setSearchHistory] = useState([]);
   const [showCamera, setShowCamera] = useState(false);
   const [cameraStream, setCameraStream] = useState(null);
   
@@ -129,8 +127,7 @@ function App() {
     mood: '',
     scale: '',
     keywords: '',
-    source: '',
-    uploadedFiles: []
+    source: ''
   });
 
   // Save bhajans to localStorage whenever bhajans array changes
@@ -341,32 +338,18 @@ function App() {
 
     setIsProcessing(true);
     let combinedText = '';
-    const processedFiles = [];
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       try {
         const fileText = await extractTextFromFile(file);
         combinedText += fileText + '\n\n';
-        
-        processedFiles.push({
-          name: file.name,
-          size: file.size,
-          type: file.type,
-          extractedText: fileText
-        });
       } catch (error) {
         console.error(`Error processing ${file.name}:`, error);
-        processedFiles.push({
-          name: file.name,
-          size: file.size,
-          type: file.type,
-          extractedText: `Error processing ${file.name}`
-        });
+        combinedText += `Error processing ${file.name}\n\n`;
       }
     }
 
-    setUploadedFiles(processedFiles);
     setExtractedText(combinedText);
     
     const autoTitle = extractTitle(combinedText) || (files.length > 0 ? files[0].name.replace(/\.(pdf|jpg|jpeg|png|gif|bmp)$/i, '').replace(/[-_]/g, ' ') : '');
@@ -379,8 +362,7 @@ function App() {
       source: files.length === 1 ? `${files[0].name}` : `Multiple files: ${files.map(f => f.name).join(', ')}`,
       title: autoTitle,
       deity: autoDeity,
-      category: autoCategory,
-      uploadedFiles: processedFiles
+      category: autoCategory
     }));
 
     setIsProcessing(false);
@@ -468,11 +450,9 @@ function App() {
       mood: '',
       scale: '',
       keywords: '',
-      source: '',
-      uploadedFiles: []
+      source: ''
     });
     setExtractedText('');
-    setUploadedFiles([]);
     
     alert(`Bhajan ${editingBhajan ? 'updated' : 'saved'} successfully! 🎉`);
   };
@@ -879,7 +859,6 @@ function App() {
               onClick={() => {
                 setShowUpload(false);
                 setExtractedText('');
-                setUploadedFiles([]);
                 setEditingBhajan(null);
                 stopCamera();
                 setNewBhajan({
@@ -891,8 +870,7 @@ function App() {
                   mood: '',
                   scale: '',
                   keywords: '',
-                  source: '',
-                  uploadedFiles: []
+                  source: ''
                 });
               }}
               className="flex items-center text-orange-600 hover:text-orange-800 transition-colors mb-6"
