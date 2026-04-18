@@ -140,7 +140,6 @@ function App() {
       console.log('Saved', bhajans.length, 'bhajans to localStorage');
     } catch (error) {
       console.error('Error saving bhajans to localStorage:', error);
-      // Show user-friendly message if storage is full
       if (error.name === 'QuotaExceededError') {
         alert('Storage limit reached. Please export your bhajans as backup and clear some data.');
       }
@@ -175,14 +174,12 @@ function App() {
       try {
         const importedData = JSON.parse(e.target.result);
         if (Array.isArray(importedData) && importedData.length > 0) {
-          // Merge with existing bhajans, avoiding duplicates by title
           const existingTitles = new Set(bhajans.map(b => b.title.toLowerCase()));
           const newBhajans = importedData.filter(b => 
             b.title && b.lyrics && !existingTitles.has(b.title.toLowerCase())
           );
           
           if (newBhajans.length > 0) {
-            // Assign new IDs
             const maxId = Math.max(...bhajans.map(b => b.id), 0);
             const bhajanswithNewIds = newBhajans.map((bhajan, index) => ({
               ...bhajan,
@@ -206,7 +203,6 @@ function App() {
       }
     };
     reader.readAsText(file);
-    // Reset file input
     event.target.value = '';
   };
 
@@ -215,13 +211,13 @@ function App() {
     if (window.confirm(`Are you sure you want to delete ALL ${bhajans.length} bhajans? This cannot be undone.\n\nWe recommend exporting a backup first.`)) {
       if (window.confirm('This is your FINAL WARNING. All bhajans will be permanently deleted.')) {
         localStorage.removeItem('babosa-sankirtan-bhajans');
-        setBhajans(getInitialBhajans().slice(0, 4)); // Keep only the 4 default bhajans
+        setBhajans(getInitialBhajans().slice(0, 4));
         alert('All uploaded bhajans have been deleted. Default bhajans restored.');
       }
     }
   };
 
-  // Load Tesseract.js dynamically when needed
+  // Load Tesseract.js dynamically when needed - FIX FOR OCR
   useEffect(() => {
     if (!window.Tesseract) {
       const script = document.createElement('script');
@@ -237,10 +233,8 @@ function App() {
     }
   }, []);
 
-  // [Rest of the component code remains the same as previous version...]
-  // [I'll include just the key functions for brevity, but the full component would be exactly the same]
-
-  const extractTitle = (textContent, isFirstFile = false) => {
+  // Enhanced auto-detection functions
+  const extractTitle = (textContent) => {
     if (!textContent) return '';
     
     const lines = textContent.split('\n')
@@ -341,8 +335,106 @@ function App() {
     });
   };
 
-  // [Include all other functions like saveBhajan, deleteBhajan, etc. exactly as before]
-  
+  // Handle file uploads with auto-detection
+  const handleMultipleFileUpload = async (files) => {
+    if (!files || files.length === 0) return;
+
+    setIsProcessing(true);
+    let combinedText = '';
+    const processedFiles = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      try {
+        const fileText = await extractTextFromFile(file);
+        combinedText += fileText + '\n\n';
+        
+        processedFiles.push({
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          extractedText: fileText
+        });
+      } catch (error) {
+        console.error(`Error processing ${file.name}:`, error);
+        processedFiles.push({
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          extractedText: `Error processing ${file.name}`
+        });
+      }
+    }
+
+    setUploadedFiles(processedFiles);
+    setExtractedText(combinedText);
+    
+    const autoTitle = extractTitle(combinedText) || (files.length > 0 ? files[0].name.replace(/\.(pdf|jpg|jpeg|png|gif|bmp)$/i, '').replace(/[-_]/g, ' ') : '');
+    const autoDeity = autoDetectDeity(combinedText);
+    const autoCategory = autoDetectCategory(combinedText, autoTitle);
+    
+    setNewBhajan(prev => ({
+      ...prev,
+      lyrics: combinedText,
+      source: files.length === 1 ? `${files[0].name}` : `Multiple files: ${files.map(f => f.name).join(', ')}`,
+      title: autoTitle,
+      deity: autoDeity,
+      category: autoCategory,
+      uploadedFiles: processedFiles
+    }));
+
+    setIsProcessing(false);
+  };
+
+  // Camera functions
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { 
+          facingMode: 'environment',
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        }
+      });
+      setCameraStream(stream);
+      setShowCamera(true);
+    } catch (error) {
+      console.error('Camera access error:', error);
+      alert('Unable to access camera. Please check permissions or try uploading files instead.');
+    }
+  };
+
+  const stopCamera = () => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      setCameraStream(null);
+    }
+    setShowCamera(false);
+  };
+
+  const capturePhoto = () => {
+    if (!cameraStream) return;
+
+    const video = document.createElement('video');
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    video.srcObject = cameraStream;
+    video.play();
+
+    video.onloadedmetadata = () => {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0);
+
+      canvas.toBlob(async (blob) => {
+        const file = new File([blob], `bhajan_photo_${Date.now()}.jpg`, { type: 'image/jpeg' });
+        stopCamera();
+        await handleMultipleFileUpload([file]);
+      }, 'image/jpeg', 0.8);
+    };
+  };
+
   const saveBhajan = () => {
     const bhajanData = editingBhajan ? editingBhajan : newBhajan;
     
@@ -351,18 +443,13 @@ function App() {
       return;
     }
 
-    const finalBhajanData = {
-      ...bhajanData,
-      keywords: bhajanData.keywords || ''
-    };
-
     if (editingBhajan) {
-      setBhajans(prev => prev.map(b => b.id === editingBhajan.id ? finalBhajanData : b));
+      setBhajans(prev => prev.map(b => b.id === editingBhajan.id ? bhajanData : b));
       setEditingBhajan(null);
     } else {
       const newId = Math.max(...bhajans.map(b => b.id), 0) + 1;
       const bhajanWithId = {
-        ...finalBhajanData,
+        ...bhajanData,
         id: newId,
         dateAdded: new Date().toISOString(),
         viewCount: 0,
@@ -387,7 +474,6 @@ function App() {
     setExtractedText('');
     setUploadedFiles([]);
     
-    // Show success message
     alert(`Bhajan ${editingBhajan ? 'updated' : 'saved'} successfully! 🎉`);
   };
 
@@ -400,91 +486,850 @@ function App() {
     }
   };
 
-  // [Continue with all the other existing functions and the full UI as before...]
-  // [For brevity I'm not including the entire render function, but it would be identical to previous version]
+  const editBhajan = (bhajan) => {
+    setEditingBhajan(bhajan);
+    setShowUpload(true);
+    setActiveView('add');
+  };
+
+  const navigateToHome = () => {
+    setActiveView('home');
+    setShowUpload(false);
+    setSelectedBhajan(null);
+    setShowMenu(false);
+  };
+
+  const trackView = (bhajanId) => {
+    setBhajans(prev => prev.map(bhajan => 
+      bhajan.id === bhajanId 
+        ? { 
+            ...bhajan, 
+            viewCount: (bhajan.viewCount || 0) + 1,
+            lastViewed: new Date().toISOString()
+          }
+        : bhajan
+    ));
+  };
+
+  // Voice search functionality
+  useEffect(() => {
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      setVoiceSearchSupported(true);
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const recognition = new SpeechRecognition();
+      
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'hi-IN';
+      
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        setSearchTerm(transcript);
+        setVoiceSearchActive(false);
+      };
+      
+      recognition.onerror = () => {
+        setVoiceSearchActive(false);
+      };
+      
+      recognition.onend = () => {
+        setVoiceSearchActive(false);
+      };
+      
+      recognitionRef.current = recognition;
+    }
+  }, []);
+
+  const startVoiceSearch = () => {
+    if (recognitionRef.current && voiceSearchSupported) {
+      setVoiceSearchActive(true);
+      recognitionRef.current.start();
+    }
+  };
+
+  const stopVoiceSearch = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      setVoiceSearchActive(false);
+    }
+  };
+
+  const shareToWhatsApp = (bhajan) => {
+    let shareText = `🕉️ ${bhajan.title}\n\n`;
+    shareText += `${bhajan.lyrics}\n\n`;
+    if (bhajan.author) shareText += `✍️ Author: ${bhajan.author}\n`;
+    if (bhajan.deity) shareText += `🙏 Deity: ${bhajan.deity}\n`;
+    if (bhajan.category) shareText += `📖 Category: ${bhajan.category}\n`;
+    shareText += `\n🕉️ Shared from बाबोसा संकीर्तन (Babosa Sankirtan)`;
+    
+    const text = encodeURIComponent(shareText);
+    const url = `https://api.whatsapp.com/send?text=${text}`;
+    window.open(url, '_blank');
+  };
+
+  const copyToClipboard = async (bhajan) => {
+    let shareText = `🕉️ ${bhajan.title}\n\n`;
+    shareText += `${bhajan.lyrics}\n\n`;
+    if (bhajan.author) shareText += `✍️ Author: ${bhajan.author}\n`;
+    if (bhajan.deity) shareText += `🙏 Deity: ${bhajan.deity}\n`;
+    if (bhajan.category) shareText += `📖 Category: ${bhajan.category}\n`;
+    shareText += `\n🕉️ Shared from बाबोसा संकीर्तन (Babosa Sankirtan)`;
+    
+    try {
+      await navigator.clipboard.writeText(shareText);
+      alert('Bhajan copied to clipboard! 📋');
+    } catch (err) {
+      const textArea = document.createElement('textarea');
+      textArea.value = shareText;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      alert('Bhajan copied to clipboard! 📋');
+    }
+  };
+
+  // Filter bhajans based on search and filters
+  const filteredBhajans = React.useMemo(() => {
+    return bhajans.filter(bhajan => {
+      const matchesSearch = !searchTerm || 
+        bhajan.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        bhajan.lyrics.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (bhajan.deity && bhajan.deity.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (bhajan.author && bhajan.author.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (bhajan.keywords && bhajan.keywords.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (bhajan.category && bhajan.category.toLowerCase().includes(searchTerm.toLowerCase()));
+      
+      const matchesCategory = filterCategory === '' || bhajan.category === filterCategory;
+      const matchesDeity = filterDeity === '' || bhajan.deity === filterDeity;
+      const matchesMood = filterMood === '' || bhajan.mood === filterMood;
+      
+      return matchesSearch && matchesCategory && matchesDeity && matchesMood;
+    });
+  }, [bhajans, searchTerm, filterCategory, filterDeity, filterMood]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-red-50 relative overflow-hidden">
-      {/* All the existing UI components would go here exactly as before */}
-      
-      {/* Add a Data Management section in the sidebar menu */}
+      {/* Decorative background */}
+      <div className="absolute inset-0 opacity-5">
+        <div className="absolute top-10 left-10 text-8xl">🕉️</div>
+        <div className="absolute top-32 right-20 text-6xl">🪔</div>
+        <div className="absolute bottom-20 left-20 text-7xl">🙏</div>
+        <div className="absolute top-1/2 right-10 text-5xl">📿</div>
+        <div className="absolute bottom-32 right-32 text-6xl">🌺</div>
+      </div>
+
+      {/* Header */}
+      <div className="relative z-10 bg-white/80 backdrop-blur-md shadow-lg border-b border-orange-200">
+        <div className="max-w-6xl mx-auto px-4 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              <button
+                onClick={() => setShowMenu(true)}
+                className="p-2 hover:bg-orange-100 rounded-lg transition-colors mr-4"
+              >
+                <svg className="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+              <div onClick={navigateToHome} className="cursor-pointer">
+                <h1 className="text-2xl font-bold text-amber-900">बाबोसा संकीर्तन</h1>
+                <p className="text-sm text-orange-600">भजन से भगवान तक</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center space-x-4">
+              {/* Voice search button */}
+              {voiceSearchSupported && (
+                <button
+                  onClick={voiceSearchActive ? stopVoiceSearch : startVoiceSearch}
+                  className={`p-2 rounded-lg transition-colors ${
+                    voiceSearchActive 
+                      ? 'bg-red-100 text-red-600 animate-pulse' 
+                      : 'hover:bg-orange-100 text-orange-600'
+                  }`}
+                  title="Voice Search"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                  </svg>
+                </button>
+              )}
+
+              {/* Search bar */}
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="खोजें भजन, देवता, शब्द..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-10 pr-4 py-2 w-64 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
+                />
+                <svg className="w-5 h-5 text-orange-400 absolute left-3 top-1/2 transform -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Sidebar Menu - DESKTOP FIX: Removed lg:hidden */}
       {showMenu && (
         <div className="fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/50" onClick={() => setShowMenu(false)} />
-          <div className="absolute left-0 top-0 h-full w-80 bg-gradient-to-br from-orange-50 to-amber-50 shadow-2xl">
-            <div 
-              className="fixed left-0 top-0 h-full w-80 bg-gradient-to-br from-orange-50 to-amber-50 shadow-2xl transform transition-transform duration-300 ease-out overflow-y-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Menu Header */}
-              <div className="p-6 border-b border-orange-200 bg-gradient-to-r from-orange-100 to-amber-100">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    <span className="text-2xl mr-3">🕉️</span>
-                    <div>
-                      <h3 className="font-bold text-amber-900">बाबोसा संकीर्तन</h3>
-                      <p className="text-sm text-amber-600">{bhajans.length} भजन संग्रह</p>
-                    </div>
+          <div className="absolute left-0 top-0 h-full w-80 bg-gradient-to-br from-orange-50 to-amber-50 shadow-2xl overflow-y-auto">
+            {/* Menu Header */}
+            <div className="p-6 border-b border-orange-200 bg-gradient-to-r from-orange-100 to-amber-100">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <span className="text-2xl mr-3">🕉️</span>
+                  <div>
+                    <h3 className="font-bold text-amber-900">बाबोसा संकीर्तन</h3>
+                    <p className="text-sm text-amber-600">{bhajans.length} भजन संग्रह</p>
                   </div>
-                  <button
-                    onClick={() => setShowMenu(false)}
-                    className="p-2 hover:bg-white/50 rounded-lg transition-colors"
-                  >
-                    <svg className="w-5 h-5 text-amber-800" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
                 </div>
+                <button
+                  onClick={() => setShowMenu(false)}
+                  className="p-2 hover:bg-white/50 rounded-lg transition-colors"
+                >
+                  <svg className="w-5 h-5 text-amber-800" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
+            </div>
 
-              {/* Menu Items */}
-              <div className="p-4 space-y-2">
-                {/* Existing menu items... */}
+            {/* Menu Items */}
+            <div className="p-4 space-y-2">
+              {/* Home */}
+              <button
+                onClick={navigateToHome}
+                className={`w-full flex items-center p-4 rounded-xl transition-all duration-300 ${
+                  activeView === 'home' ? 'bg-orange-500 text-white shadow-lg' : 'hover:bg-orange-100 text-amber-800'
+                }`}
+              >
+                <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                </svg>
+                <span className="font-semibold">Home</span>
+              </button>
+
+              {/* Upload Bhajan */}
+              <button
+                onClick={() => {
+                  setActiveView('add');
+                  setShowUpload(true);
+                  setEditingBhajan(null);
+                  setShowMenu(false);
+                }}
+                className={`w-full flex items-center p-4 rounded-xl transition-all duration-300 ${
+                  activeView === 'add' ? 'bg-orange-500 text-white shadow-lg' : 'hover:bg-orange-100 text-amber-800'
+                }`}
+              >
+                <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                </svg>
+                <span className="font-semibold">Upload Bhajan</span>
+              </button>
+
+              {/* Data Management Section */}
+              <div className="pt-4 border-t border-orange-200">
+                <h4 className="text-sm font-semibold text-amber-700 mb-3 px-4">📁 Data Management</h4>
                 
-                {/* Data Management Section */}
-                <div className="pt-4 border-t border-orange-200">
-                  <h4 className="text-sm font-semibold text-amber-700 mb-3 px-4">📁 Data Management</h4>
-                  
-                  <button
-                    onClick={exportBhajans}
-                    className="w-full flex items-center p-3 rounded-lg hover:bg-orange-100 text-amber-800 transition-colors"
-                  >
-                    <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
-                    </svg>
-                    <span className="text-sm font-medium">Export Backup</span>
-                  </button>
+                <button
+                  onClick={exportBhajans}
+                  className="w-full flex items-center p-3 rounded-lg hover:bg-orange-100 text-amber-800 transition-colors"
+                >
+                  <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <span className="text-sm font-medium">Export Backup</span>
+                </button>
 
-                  <label className="w-full flex items-center p-3 rounded-lg hover:bg-orange-100 text-amber-800 transition-colors cursor-pointer">
-                    <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                    </svg>
-                    <span className="text-sm font-medium">Import Backup</span>
-                    <input 
-                      type="file" 
-                      accept=".json"
-                      onChange={importBhajans}
-                      className="hidden"
-                    />
-                  </label>
+                <label className="w-full flex items-center p-3 rounded-lg hover:bg-orange-100 text-amber-800 transition-colors cursor-pointer">
+                  <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                  </svg>
+                  <span className="text-sm font-medium">Import Backup</span>
+                  <input 
+                    type="file" 
+                    accept=".json"
+                    onChange={importBhajans}
+                    className="hidden"
+                  />
+                </label>
 
-                  <button
-                    onClick={clearAllData}
-                    className="w-full flex items-center p-3 rounded-lg hover:bg-red-100 text-red-600 transition-colors"
-                  >
-                    <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                    <span className="text-sm font-medium">Clear All Data</span>
-                  </button>
-                </div>
+                <button
+                  onClick={clearAllData}
+                  className="w-full flex items-center p-3 rounded-lg hover:bg-red-100 text-red-600 transition-colors"
+                >
+                  <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  <span className="text-sm font-medium">Clear All Data</span>
+                </button>
               </div>
             </div>
           </div>
         </div>
       )}
-      
-      {/* Rest of the UI exactly as before... */}
+
+      {/* Main Content */}
+      <div className="relative z-10 max-w-6xl mx-auto px-4 py-8">
+        
+        {selectedBhajan ? (
+          /* Individual Bhajan View */
+          <div>
+            <div className="mb-6">
+              <button
+                onClick={() => setSelectedBhajan(null)}
+                className="flex items-center text-orange-600 hover:text-orange-800 transition-colors mb-4"
+              >
+                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                </svg>
+                Back to Collection
+              </button>
+            </div>
+
+            <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-8">
+              <div className="mb-8">
+                <h1 className="text-4xl font-bold text-amber-900 mb-4">{selectedBhajan.title}</h1>
+                
+                <div className="flex flex-wrap gap-3 mb-6">
+                  {selectedBhajan.deity && (
+                    <span className="bg-purple-100 text-purple-800 px-4 py-2 rounded-full text-sm font-medium">
+                      🙏 {selectedBhajan.deity}
+                    </span>
+                  )}
+                  {selectedBhajan.category && (
+                    <span className="bg-green-100 text-green-800 px-4 py-2 rounded-full text-sm font-medium">
+                      📖 {selectedBhajan.category}
+                    </span>
+                  )}
+                  {selectedBhajan.mood && (
+                    <span className="bg-blue-100 text-blue-800 px-4 py-2 rounded-full text-sm font-medium">
+                      💭 {selectedBhajan.mood}
+                    </span>
+                  )}
+                </div>
+
+                {selectedBhajan.author && (
+                  <p className="text-amber-700 font-medium mb-4">✍️ {selectedBhajan.author}</p>
+                )}
+              </div>
+
+              <div className="mb-8">
+                <div className="bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl p-6">
+                  <pre className="whitespace-pre-wrap text-lg leading-relaxed text-amber-900 font-medium">
+                    {selectedBhajan.lyrics}
+                  </pre>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap justify-center gap-4 mt-8">
+                <button
+                  onClick={() => editBhajan(selectedBhajan)}
+                  className="flex items-center bg-amber-500 hover:bg-amber-600 text-white px-6 py-3 rounded-xl font-semibold transition-colors"
+                >
+                  <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  Edit Bhajan
+                </button>
+
+                <button
+                  onClick={() => shareToWhatsApp(selectedBhajan)}
+                  className="flex items-center bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-xl font-semibold transition-colors"
+                >
+                  <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.488"/>
+                  </svg>
+                  WhatsApp
+                </button>
+
+                <button
+                  onClick={() => copyToClipboard(selectedBhajan)}
+                  className="flex items-center bg-gray-500 hover:bg-gray-600 text-white px-6 py-3 rounded-xl font-semibold transition-colors"
+                >
+                  <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                  Copy
+                </button>
+
+                <button
+                  onClick={() => deleteBhajan(selectedBhajan.id)}
+                  className="flex items-center bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-xl font-semibold transition-colors"
+                >
+                  <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+
+        ) : showUpload ? (
+          /* Upload/Edit Interface */
+          <div className="max-w-6xl mx-auto">
+            <button
+              onClick={() => {
+                setShowUpload(false);
+                setExtractedText('');
+                setUploadedFiles([]);
+                setEditingBhajan(null);
+                stopCamera();
+                setNewBhajan({
+                  title: '',
+                  lyrics: '',
+                  author: '',
+                  deity: '',
+                  category: '',
+                  mood: '',
+                  scale: '',
+                  keywords: '',
+                  source: '',
+                  uploadedFiles: []
+                });
+              }}
+              className="flex items-center text-orange-600 hover:text-orange-800 transition-colors mb-6"
+            >
+              <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+              Back to Collection
+            </button>
+
+            <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-8">
+              
+              {!editingBhajan && !extractedText ? (
+                /* File Upload */
+                <div className="mb-8">
+                  <div 
+                    className="border-3 border-dashed border-orange-300 rounded-2xl p-12 text-center hover:border-orange-400 transition-colors bg-gradient-to-br from-orange-50 to-amber-50"
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      handleMultipleFileUpload(Array.from(e.dataTransfer.files));
+                    }}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDragEnter={(e) => e.preventDefault()}
+                  >
+                    {isProcessing ? (
+                      <div className="space-y-4">
+                        <div className="animate-spin text-6xl">⚙️</div>
+                        <p className="text-xl text-amber-700">Processing your files...</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-6">
+                        <div>
+                          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                            <label className="inline-block bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white px-8 py-4 rounded-xl font-semibold cursor-pointer transition-all duration-300 shadow-lg hover:shadow-xl">
+                              📁 Choose Files
+                              <input 
+                                type="file" 
+                                className="hidden" 
+                                multiple
+                                accept=".pdf,.jpg,.jpeg,.png,.gif,.bmp"
+                                onChange={(e) => handleMultipleFileUpload(Array.from(e.target.files))}
+                              />
+                            </label>
+                            
+                            <button
+                              onClick={startCamera}
+                              className="inline-block bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white px-8 py-4 rounded-xl font-semibold transition-all duration-300 shadow-lg hover:shadow-xl"
+                            >
+                              📸 Take Photo
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Camera Interface */}
+                  {showCamera && (
+                    <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center">
+                      <div className="bg-white rounded-2xl p-6 max-w-lg w-full mx-4">
+                        <div className="text-center mb-4">
+                          <h3 className="text-xl font-bold text-amber-900 mb-2">📸 Capture Bhajan Photo</h3>
+                          <p className="text-amber-700 text-sm">Position the bhajan text clearly in the camera view</p>
+                        </div>
+
+                        <div className="relative bg-black rounded-xl overflow-hidden mb-4">
+                          <video
+                            ref={(video) => {
+                              if (video && cameraStream) {
+                                video.srcObject = cameraStream;
+                                video.play();
+                              }
+                            }}
+                            className="w-full h-64 object-cover"
+                            autoPlay
+                            playsInline
+                            muted
+                          />
+                          
+                          <div className="absolute inset-4 border-2 border-white/50 border-dashed rounded-lg flex items-center justify-center">
+                            <span className="text-white/70 text-sm bg-black/50 px-2 py-1 rounded">
+                              Align bhajan text here
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex gap-3 justify-center">
+                          <button
+                            onClick={capturePhoto}
+                            className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white px-6 py-3 rounded-xl font-semibold transition-all duration-300 flex items-center"
+                          >
+                            📷 Capture
+                          </button>
+                          
+                          <button
+                            onClick={stopCamera}
+                            className="bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-white px-6 py-3 rounded-xl font-semibold transition-all duration-300 flex items-center"
+                          >
+                            ✕ Cancel
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+              ) : (
+                /* Bhajan Edit Form */
+                <div>
+                  <h2 className="text-2xl font-bold text-amber-900 mb-6 text-center">
+                    {editingBhajan ? 'Edit Bhajan' : 'Add New Bhajan'}
+                  </h2>
+
+                  <div className="grid md:grid-cols-2 gap-8">
+                    {/* Left Column */}
+                    <div className="space-y-6">
+                      <div>
+                        <label className="block text-sm font-semibold text-amber-800 mb-2">
+                          Bhajan Title 📖
+                        </label>
+                        <input
+                          type="text"
+                          value={editingBhajan ? editingBhajan.title : newBhajan.title}
+                          onChange={(e) => editingBhajan ? 
+                            setEditingBhajan(prev => ({...prev, title: e.target.value})) :
+                            setNewBhajan(prev => ({...prev, title: e.target.value}))
+                          }
+                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
+                          placeholder="Enter bhajan title..."
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-amber-800 mb-2">
+                          Deity 🙏
+                        </label>
+                        <input
+                          type="text"
+                          value={editingBhajan ? editingBhajan.deity : newBhajan.deity}
+                          onChange={(e) => editingBhajan ?
+                            setEditingBhajan(prev => ({...prev, deity: e.target.value})) :
+                            setNewBhajan(prev => ({...prev, deity: e.target.value}))
+                          }
+                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
+                          placeholder="Krishna, Rama, Shiva, etc."
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-amber-800 mb-2">
+                          Category 📖
+                        </label>
+                        <input
+                          type="text"
+                          value={editingBhajan ? editingBhajan.category : newBhajan.category}
+                          onChange={(e) => editingBhajan ?
+                            setEditingBhajan(prev => ({...prev, category: e.target.value})) :
+                            setNewBhajan(prev => ({...prev, category: e.target.value}))
+                          }
+                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
+                          placeholder="Aarti, Bhajan, Mantra, etc."
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-amber-800 mb-2">
+                          Author ✍️
+                        </label>
+                        <input
+                          type="text"
+                          value={editingBhajan ? editingBhajan.author : newBhajan.author}
+                          onChange={(e) => editingBhajan ?
+                            setEditingBhajan(prev => ({...prev, author: e.target.value})) :
+                            setNewBhajan(prev => ({...prev, author: e.target.value}))
+                          }
+                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
+                          placeholder="Traditional, Tulsidas, etc."
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-amber-800 mb-2">
+                          Mood 💭
+                        </label>
+                        <select
+                          value={editingBhajan ? editingBhajan.mood : newBhajan.mood}
+                          onChange={(e) => editingBhajan ?
+                            setEditingBhajan(prev => ({...prev, mood: e.target.value})) :
+                            setNewBhajan(prev => ({...prev, mood: e.target.value}))
+                          }
+                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
+                        >
+                          <option value="">Select mood...</option>
+                          <option value="Devotional">Devotional</option>
+                          <option value="Peaceful">Peaceful</option>
+                          <option value="Joyful">Joyful</option>
+                          <option value="Contemplative">Contemplative</option>
+                          <option value="Uplifting">Uplifting</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Right Column */}
+                    <div className="space-y-6">
+                      <div>
+                        <label className="block text-sm font-semibold text-amber-800 mb-2">
+                          Bhajan Lyrics 📝
+                        </label>
+                        <textarea
+                          value={editingBhajan ? editingBhajan.lyrics : newBhajan.lyrics}
+                          onChange={(e) => editingBhajan ?
+                            setEditingBhajan(prev => ({...prev, lyrics: e.target.value})) :
+                            setNewBhajan(prev => ({...prev, lyrics: e.target.value}))
+                          }
+                          rows={12}
+                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400 font-mono"
+                          placeholder="पूर्ण भजन के बोल यहाँ लिखें..."
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-amber-800 mb-2">
+                          Keywords 🏷️
+                        </label>
+                        <input
+                          type="text"
+                          value={editingBhajan ? editingBhajan.keywords : newBhajan.keywords}
+                          onChange={(e) => editingBhajan ?
+                            setEditingBhajan(prev => ({...prev, keywords: e.target.value})) :
+                            setNewBhajan(prev => ({...prev, keywords: e.target.value}))
+                          }
+                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
+                          placeholder="devotion, prayer, peace..."
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-amber-800 mb-2">
+                          Source 📚
+                        </label>
+                        <input
+                          type="text"
+                          value={editingBhajan ? editingBhajan.source : newBhajan.source}
+                          onChange={(e) => editingBhajan ?
+                            setEditingBhajan(prev => ({...prev, source: e.target.value})) :
+                            setNewBhajan(prev => ({...prev, source: e.target.value}))
+                          }
+                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
+                          placeholder="Book name, website, etc."
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-center mt-8">
+                    <button
+                      onClick={saveBhajan}
+                      className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white px-8 py-4 rounded-xl font-bold text-lg transition-all duration-300 shadow-lg hover:shadow-xl"
+                    >
+                      {editingBhajan ? '✓ Update Bhajan' : '✓ Save Bhajan'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+        ) : (
+          /* Main Bhajan Collection View */
+          <div>
+            {/* Filters */}
+            <div className="mb-6">
+              <div className="flex flex-wrap gap-4">
+                <select
+                  value={filterCategory}
+                  onChange={(e) => setFilterCategory(e.target.value)}
+                  className="px-4 py-2 border-2 border-orange-200 rounded-lg focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
+                >
+                  <option value="">All Categories</option>
+                  {[...new Set(bhajans.map(b => b.category).filter(Boolean))].map(category => (
+                    <option key={category} value={category}>{category}</option>
+                  ))}
+                </select>
+
+                <select
+                  value={filterDeity}
+                  onChange={(e) => setFilterDeity(e.target.value)}
+                  className="px-4 py-2 border-2 border-orange-200 rounded-lg focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
+                >
+                  <option value="">All Deities</option>
+                  {[...new Set(bhajans.map(b => b.deity).filter(Boolean))].map(deity => (
+                    <option key={deity} value={deity}>{deity}</option>
+                  ))}
+                </select>
+
+                <select
+                  value={filterMood}
+                  onChange={(e) => setFilterMood(e.target.value)}
+                  className="px-4 py-2 border-2 border-orange-200 rounded-lg focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
+                >
+                  <option value="">All Moods</option>
+                  {[...new Set(bhajans.map(b => b.mood).filter(Boolean))].map(mood => (
+                    <option key={mood} value={mood}>{mood}</option>
+                  ))}
+                </select>
+
+                <button
+                  onClick={() => {
+                    setFilterCategory('');
+                    setFilterDeity('');
+                    setFilterMood('');
+                    setSearchTerm('');
+                  }}
+                  className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg transition-colors"
+                >
+                  Clear Filters
+                </button>
+              </div>
+            </div>
+
+            {/* Bhajan Grid */}
+            {filteredBhajans.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="text-6xl mb-4">🔍</div>
+                <h3 className="text-xl font-semibold text-amber-800 mb-2">No bhajans found</h3>
+                <p className="text-amber-600 mb-4">Try adjusting your search or filters</p>
+                <button
+                  onClick={() => {
+                    setFilterCategory('');
+                    setFilterDeity('');
+                    setFilterMood('');
+                    setSearchTerm('');
+                  }}
+                  className="bg-orange-500 hover:bg-orange-600 text-white px-6 py-2 rounded-lg transition-colors"
+                >
+                  Clear All Filters
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {filteredBhajans.map(bhajan => (
+                  <div
+                    key={bhajan.id}
+                    className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer overflow-hidden group"
+                    onClick={() => {
+                      setSelectedBhajan(bhajan);
+                      trackView(bhajan.id);
+                    }}
+                  >
+                    <div className="p-6">
+                      <h3 className="text-xl font-bold text-amber-900 mb-3 group-hover:text-orange-600 transition-colors line-clamp-2">
+                        {bhajan.title}
+                      </h3>
+                      
+                      <p className="text-gray-700 mb-4 line-clamp-3 text-sm leading-relaxed">
+                        {bhajan.lyrics.slice(0, 120)}...
+                      </p>
+
+                      <div className="flex flex-wrap gap-2 mb-4">
+                        {bhajan.deity && (
+                          <span className="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-xs font-medium">
+                            🙏 {bhajan.deity}
+                          </span>
+                        )}
+                        {bhajan.category && (
+                          <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs font-medium">
+                            📖 {bhajan.category}
+                          </span>
+                        )}
+                        {bhajan.mood && (
+                          <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-xs font-medium">
+                            💭 {bhajan.mood}
+                          </span>
+                        )}
+                      </div>
+
+                      {bhajan.author && (
+                        <div className="flex items-center">
+                          <span className="text-orange-500 mr-3">✍️</span>
+                          <span className="font-medium">{bhajan.author}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex space-x-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            editBhajan(bhajan);
+                          }}
+                          className="p-2 bg-white/90 hover:bg-white text-amber-600 hover:text-amber-800 rounded-lg shadow-md transition-colors"
+                          title="Edit"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            shareToWhatsApp(bhajan);
+                          }}
+                          className="p-2 bg-white/90 hover:bg-white text-green-600 hover:text-green-800 rounded-lg shadow-md transition-colors"
+                          title="Share"
+                        >
+                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.488"/>
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="px-6 py-3 bg-gradient-to-r from-orange-50 to-amber-50 border-t border-orange-100">
+                      <div className="flex items-center justify-between text-xs text-amber-700">
+                        <span className="flex items-center">
+                          <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                          {bhajan.viewCount || 0} views
+                        </span>
+                        {bhajan.lastViewed && (
+                          <span>
+                            {new Date(bhajan.lastViewed).toLocaleDateString('en-IN')}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
