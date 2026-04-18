@@ -4,7 +4,6 @@ function App() {
   // Auto-sync state
   const [autoExportEnabled, setAutoExportEnabled] = useState(true);
   const [lastAutoExport, setLastAutoExport] = useState(null);
-  const [driveFileDetected, setDriveFileDetected] = useState(false);
   const [syncInstructions, setSyncInstructions] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -221,7 +220,6 @@ function App() {
           
           if (mergedData.length > bhajans.length) {
             setBhajans(mergedData);
-            setDriveFileDetected(true);
             alert(`✅ Sync successful! Added ${mergedData.length - bhajans.length} new bhajans from Google Drive.`);
           } else if (mergedData.length === bhajans.length) {
             alert('✅ Sync complete! Your data is already up to date.');
