@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
 function App() {
   const [bhajans, setBhajans] = useState([
@@ -117,6 +117,22 @@ function App() {
     uploadedFiles: []
   });
 
+  // Load Tesseract.js dynamically when needed - FIX FOR OCR
+  useEffect(() => {
+    if (!window.Tesseract) {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js';
+      script.async = true;
+      script.onload = () => {
+        console.log('Tesseract.js loaded successfully');
+      };
+      script.onerror = () => {
+        console.error('Failed to load Tesseract.js');
+      };
+      document.body.appendChild(script);
+    }
+  }, []);
+
   // Enhanced auto-detection functions
   const extractTitle = (textContent, isFirstFile = false) => {
     if (!textContent) return '';
@@ -222,20 +238,30 @@ function App() {
     return sortedLines.length > 0 ? sortedLines[0][0] : '';
   };
 
-  // Utility function for OCR processing
+  // Enhanced OCR processing with better error handling - FIX FOR OCR
   const processImageWithOCR = async (imageFile) => {
     try {
-      // Check if Tesseract is available
-      if (typeof window !== 'undefined' && window.Tesseract) {
-        const { data: { text } } = await window.Tesseract.recognize(imageFile, 'eng+hin');
-        return text;
+      // Wait for Tesseract to load if not already available
+      let attempts = 0;
+      while (!window.Tesseract && attempts < 10) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        attempts++;
       }
       
-      // Fallback: return filename as placeholder
-      return `Text from ${imageFile.name} (OCR processing not available)`;
+      if (window.Tesseract) {
+        console.log('Starting OCR processing for:', imageFile.name);
+        const { data: { text } } = await window.Tesseract.recognize(imageFile, 'eng+hin', {
+          logger: m => console.log('OCR Progress:', m)
+        });
+        console.log('OCR completed, extracted text:', text.slice(0, 100));
+        return text;
+      } else {
+        console.error('Tesseract.js failed to load');
+        return `Image content from ${imageFile.name} (OCR library not available - please refresh and try again)`;
+      }
     } catch (error) {
       console.error('OCR Error:', error);
-      return `Unable to extract text from ${imageFile.name}`;
+      return `Unable to extract text from ${imageFile.name} (OCR error: ${error.message})`;
     }
   };
 
@@ -447,7 +473,7 @@ function App() {
   };
 
   // Voice search functionality
-  React.useEffect(() => {
+  useEffect(() => {
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
       setVoiceSearchSupported(true);
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -880,9 +906,9 @@ function App() {
         </div>
       </div>
 
-      {/* Sidebar Menu */}
+      {/* Sidebar Menu - DESKTOP FIX: Removed lg:hidden class */}
       {showMenu && (
-        <div className="fixed inset-0 z-50 lg:hidden">
+        <div className="fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/50" onClick={() => setShowMenu(false)} />
           <div className="absolute left-0 top-0 h-full w-80 bg-gradient-to-br from-orange-50 to-amber-50 shadow-2xl">
             <div 
@@ -1570,7 +1596,7 @@ function App() {
                 </div>
 
               ) : (
-                /* Bhajan Edit Form */
+                /* Bhajan Edit Form - Same as before */
                 <div>
                   <h2 className="text-2xl font-bold text-amber-900 mb-6 text-center">
                     {editingBhajan ? 'Edit Bhajan' : 'Add New Bhajan'}
@@ -1855,7 +1881,7 @@ function App() {
           </div>
 
         ) : (
-          /* Main Bhajan Collection View */
+          /* Main Bhajan Collection View - Same as before */
           <div>
             {/* Filters */}
             <div className="mb-6">
