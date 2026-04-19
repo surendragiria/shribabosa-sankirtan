@@ -777,6 +777,34 @@ function App() {
     });
   }, [bhajans, searchTerm, filterCategory, filterDeity, filterMood]);
 
+  // Compute popular keywords from all bhajans for quick search dropdown
+  const popularKeywords = React.useMemo(() => {
+    const keywordMap = {};
+    bhajans.forEach(bhajan => {
+      if (bhajan.keywords) {
+        bhajan.keywords.split(',').forEach(kw => {
+          const cleaned = kw.trim().toLowerCase();
+          if (cleaned && cleaned.length > 1) {
+            keywordMap[cleaned] = (keywordMap[cleaned] || 0) + 1;
+          }
+        });
+      }
+    });
+    
+    return Object.entries(keywordMap)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 25)
+      .map(([keyword]) => keyword);
+  }, [bhajans]);
+
+  // Handle keyword selection from dropdown
+  const handleKeywordSelect = (e) => {
+    const selected = e.target.value;
+    if (selected) {
+      setSearchTerm(selected);
+    }
+  };
+
   // Auto-sync status component
   const SyncStatusDisplay = () => {
     return (
@@ -807,29 +835,27 @@ function App() {
         <div className="absolute bottom-32 right-32 text-6xl">🌺</div>
       </div>
 
-      {/* Header */}
+      {/* Header - Mobile Responsive */}
       <div className="relative z-10 bg-white/80 backdrop-blur-md shadow-lg border-b border-orange-200">
-        <div className="max-w-6xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center">
+        <div className="max-w-6xl mx-auto px-3 sm:px-4 py-3 sm:py-4">
+          {/* Top Row: Menu + Title + Action Icons */}
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center min-w-0 flex-1">
               <button
                 onClick={() => setShowMenu(true)}
-                className="p-2 hover:bg-orange-100 rounded-lg transition-colors mr-4"
+                className="p-2 hover:bg-orange-100 rounded-lg transition-colors mr-2 sm:mr-3 flex-shrink-0"
               >
                 <svg className="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
                 </svg>
               </button>
-              <div onClick={navigateToHome} className="cursor-pointer">
-                <h1 className="text-2xl font-bold text-amber-900">बाबोसा संकीर्तन</h1>
-                <p className="text-sm text-orange-600">भजन से भगवान तक</p>
+              <div onClick={navigateToHome} className="cursor-pointer min-w-0">
+                <h1 className="text-lg sm:text-2xl font-bold text-amber-900 truncate">बाबोसा संकीर्तन</h1>
+                <p className="text-xs sm:text-sm text-orange-600 truncate">भजन से भगवान तक</p>
               </div>
             </div>
             
-            <div className="flex items-center space-x-4">
-              {/* Sync Status */}
-              <SyncStatusDisplay />
-
+            <div className="flex items-center space-x-1 sm:space-x-2 flex-shrink-0">
               {/* Check Drive Updates Button */}
               <button
                 onClick={checkForDriveUpdates}
@@ -857,21 +883,63 @@ function App() {
                   </svg>
                 </button>
               )}
-
-              {/* Search bar */}
-              <div className="relative">
-                <input
-                  type="text"
-                  placeholder="खोजें भजन, देवता, शब्द..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10 pr-4 py-2 w-64 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
-                />
-                <svg className="w-5 h-5 text-orange-400 absolute left-3 top-1/2 transform -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-              </div>
             </div>
+          </div>
+
+          {/* Second Row: Search + Keywords Dropdown (Full-width on mobile) */}
+          <div className="flex flex-col sm:flex-row gap-2">
+            {/* Search Bar - Full width on mobile */}
+            <div className="relative flex-1">
+              <input
+                type="text"
+                placeholder="खोजें भजन, देवता, शब्द..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 pr-10 py-2 w-full border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400 text-sm sm:text-base"
+              />
+              <svg className="w-5 h-5 text-orange-400 absolute left-3 top-1/2 transform -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-orange-400 hover:text-orange-600"
+                  title="Clear search"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
+
+            {/* Quick Keywords Dropdown */}
+            <select
+              value=""
+              onChange={handleKeywordSelect}
+              className="px-3 py-2 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400 bg-white text-sm sm:text-base sm:w-48 cursor-pointer"
+            >
+              <option value="">🏷️ Quick Keywords</option>
+              {popularKeywords.length > 0 ? (
+                popularKeywords.map(keyword => (
+                  <option key={keyword} value={keyword}>
+                    {keyword}
+                  </option>
+                ))
+              ) : (
+                <option value="" disabled>No keywords yet</option>
+              )}
+            </select>
+          </div>
+
+          {/* Sync status - Below search on mobile */}
+          <div className="mt-2 flex justify-between items-center">
+            <SyncStatusDisplay />
+            {searchTerm && (
+              <span className="text-xs text-amber-600">
+                🔍 Searching: <strong>{searchTerm}</strong>
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -889,7 +957,7 @@ function App() {
       {showMenu && (
         <div className="fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/50" onClick={() => setShowMenu(false)} />
-          <div className="absolute left-0 top-0 h-full w-80 bg-gradient-to-br from-orange-50 to-amber-50 shadow-2xl overflow-y-auto">
+          <div className="absolute left-0 top-0 h-full w-[85vw] max-w-sm sm:w-80 bg-gradient-to-br from-orange-50 to-amber-50 shadow-2xl overflow-y-auto">
             {/* Menu Header */}
             <div className="p-6 border-b border-orange-200 bg-gradient-to-r from-orange-100 to-amber-100">
               <div className="flex items-center justify-between">
@@ -1036,8 +1104,8 @@ function App() {
 
       {/* Sync Instructions Modal */}
       {syncInstructions && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-bold text-amber-900 mb-4">☁️ Google Drive Sync Instructions</h3>
             
             <div className="space-y-4 text-sm text-gray-700">
@@ -1068,15 +1136,15 @@ function App() {
       )}
 
       {/* Main Content */}
-      <div className="relative z-10 max-w-6xl mx-auto px-4 py-8">
+      <div className="relative z-10 max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-8">
         
         {selectedBhajan ? (
           /* Individual Bhajan View with Scale Editing */
           <div>
-            <div className="mb-6">
+            <div className="mb-4 sm:mb-6">
               <button
                 onClick={() => setSelectedBhajan(null)}
-                className="flex items-center text-orange-600 hover:text-orange-800 transition-colors mb-4"
+                className="flex items-center text-orange-600 hover:text-orange-800 transition-colors mb-2 sm:mb-4 py-2 text-sm sm:text-base"
               >
                 <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
@@ -1085,30 +1153,30 @@ function App() {
               </button>
             </div>
 
-            <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-8">
-              <div className="mb-8">
-                <h1 className="text-4xl font-bold text-amber-900 mb-4">{selectedBhajan.title}</h1>
+            <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-4 sm:p-8">
+              <div className="mb-6 sm:mb-8">
+                <h1 className="text-2xl sm:text-4xl font-bold text-amber-900 mb-4 break-words">{selectedBhajan.title}</h1>
                 
-                <div className="flex flex-wrap gap-3 mb-6">
+                <div className="flex flex-wrap gap-2 sm:gap-3 mb-4 sm:mb-6">
                   {selectedBhajan.deity && (
-                    <span className="bg-purple-100 text-purple-800 px-4 py-2 rounded-full text-sm font-medium">
+                    <span className="bg-purple-100 text-purple-800 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full text-xs sm:text-sm font-medium">
                       🙏 {selectedBhajan.deity}
                     </span>
                   )}
                   {selectedBhajan.category && (
-                    <span className="bg-green-100 text-green-800 px-4 py-2 rounded-full text-sm font-medium">
+                    <span className="bg-green-100 text-green-800 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full text-xs sm:text-sm font-medium">
                       📖 {selectedBhajan.category}
                     </span>
                   )}
                   {selectedBhajan.mood && (
-                    <span className="bg-blue-100 text-blue-800 px-4 py-2 rounded-full text-sm font-medium">
+                    <span className="bg-blue-100 text-blue-800 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full text-xs sm:text-sm font-medium">
                       💭 {selectedBhajan.mood}
                     </span>
                   )}
                   
                   {/* Scale Badge with Edit Option */}
                   {selectedBhajan.scale && (
-                    <div className="flex items-center bg-yellow-100 text-yellow-800 px-4 py-2 rounded-full text-sm font-medium">
+                    <div className="flex items-center bg-yellow-100 text-yellow-800 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full text-xs sm:text-sm font-medium">
                       <span className="mr-2">🎵 {selectedBhajan.scale}</span>
                       <button
                         onClick={startEditingScale}
@@ -1126,7 +1194,7 @@ function App() {
                   {!selectedBhajan.scale && (
                     <button
                       onClick={startEditingScale}
-                      className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-full text-sm font-medium transition-colors"
+                      className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full text-xs sm:text-sm font-medium transition-colors"
                     >
                       + Add Scale
                     </button>
@@ -1135,8 +1203,8 @@ function App() {
 
                 {/* Scale Editing Modal */}
                 {editingScale && (
-                  <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-                    <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4">
+                  <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
                       <h3 className="text-lg font-bold text-amber-900 mb-4">🎵 Edit Scale/Raag</h3>
                       
                       <div className="space-y-4">
@@ -1193,30 +1261,30 @@ function App() {
                 )}
               </div>
 
-              <div className="mb-8">
-                <div className="bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl p-6">
-                  <pre className="whitespace-pre-wrap text-lg leading-relaxed text-amber-900 font-medium">
+              <div className="mb-6 sm:mb-8">
+                <div className="bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl p-4 sm:p-6">
+                  <pre className="whitespace-pre-wrap text-base sm:text-lg leading-relaxed text-amber-900 font-medium break-words">
                     {selectedBhajan.lyrics}
                   </pre>
                 </div>
               </div>
 
-              <div className="flex flex-wrap justify-center gap-4 mt-8">
+              <div className="grid grid-cols-2 sm:flex sm:flex-wrap sm:justify-center gap-2 sm:gap-4 mt-6 sm:mt-8">
                 <button
                   onClick={() => editBhajan(selectedBhajan)}
-                  className="flex items-center bg-amber-500 hover:bg-amber-600 text-white px-6 py-3 rounded-xl font-semibold transition-colors"
+                  className="flex items-center justify-center bg-amber-500 hover:bg-amber-600 text-white px-3 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold transition-colors text-sm sm:text-base"
                 >
-                  <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1.5 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                   </svg>
-                  Edit Bhajan
+                  Edit
                 </button>
 
                 <button
                   onClick={() => shareToWhatsApp(selectedBhajan)}
-                  className="flex items-center bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-xl font-semibold transition-colors"
+                  className="flex items-center justify-center bg-green-500 hover:bg-green-600 text-white px-3 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold transition-colors text-sm sm:text-base"
                 >
-                  <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1.5 sm:mr-2" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.488"/>
                   </svg>
                   WhatsApp
@@ -1224,9 +1292,9 @@ function App() {
 
                 <button
                   onClick={() => copyToClipboard(selectedBhajan)}
-                  className="flex items-center bg-gray-500 hover:bg-gray-600 text-white px-6 py-3 rounded-xl font-semibold transition-colors"
+                  className="flex items-center justify-center bg-gray-500 hover:bg-gray-600 text-white px-3 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold transition-colors text-sm sm:text-base"
                 >
-                  <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1.5 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                   </svg>
                   Copy
@@ -1234,9 +1302,9 @@ function App() {
 
                 <button
                   onClick={() => deleteBhajan(selectedBhajan.id)}
-                  className="flex items-center bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-xl font-semibold transition-colors"
+                  className="flex items-center justify-center bg-red-500 hover:bg-red-600 text-white px-3 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold transition-colors text-sm sm:text-base"
                 >
-                  <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1.5 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                   </svg>
                   Delete
@@ -1266,7 +1334,7 @@ function App() {
                   source: ''
                 });
               }}
-              className="flex items-center text-orange-600 hover:text-orange-800 transition-colors mb-6"
+              className="flex items-center text-orange-600 hover:text-orange-800 transition-colors mb-4 sm:mb-6 py-2 text-sm sm:text-base"
             >
               <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
@@ -1274,13 +1342,13 @@ function App() {
               Back to Collection
             </button>
 
-            <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-8">
+            <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-4 sm:p-8">
               
               {!editingBhajan && !extractedText ? (
                 /* File Upload */
-                <div className="mb-8">
+                <div className="mb-6 sm:mb-8">
                   <div 
-                    className="border-3 border-dashed border-orange-300 rounded-2xl p-12 text-center hover:border-orange-400 transition-colors bg-gradient-to-br from-orange-50 to-amber-50"
+                    className="border-2 sm:border-3 border-dashed border-orange-300 rounded-2xl p-6 sm:p-12 text-center hover:border-orange-400 transition-colors bg-gradient-to-br from-orange-50 to-amber-50"
                     onDrop={(e) => {
                       e.preventDefault();
                       handleMultipleFileUpload(Array.from(e.dataTransfer.files));
@@ -1290,14 +1358,14 @@ function App() {
                   >
                     {isProcessing ? (
                       <div className="space-y-4">
-                        <div className="animate-spin text-6xl">⚙️</div>
-                        <p className="text-xl text-amber-700">Processing your files...</p>
+                        <div className="animate-spin text-5xl sm:text-6xl">⚙️</div>
+                        <p className="text-lg sm:text-xl text-amber-700">Processing your files...</p>
                       </div>
                     ) : (
-                      <div className="space-y-6">
+                      <div className="space-y-4 sm:space-y-6">
                         <div>
-                          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                            <label className="inline-block bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white px-8 py-4 rounded-xl font-semibold cursor-pointer transition-all duration-300 shadow-lg hover:shadow-xl">
+                          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
+                            <label className="inline-block bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white px-6 sm:px-8 py-3 sm:py-4 rounded-xl font-semibold cursor-pointer transition-all duration-300 shadow-lg hover:shadow-xl text-sm sm:text-base">
                               📁 Choose Files
                               <input 
                                 type="file" 
@@ -1310,7 +1378,7 @@ function App() {
                             
                             <button
                               onClick={startCamera}
-                              className="inline-block bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white px-8 py-4 rounded-xl font-semibold transition-all duration-300 shadow-lg hover:shadow-xl"
+                              className="inline-block bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white px-6 sm:px-8 py-3 sm:py-4 rounded-xl font-semibold transition-all duration-300 shadow-lg hover:shadow-xl text-sm sm:text-base"
                             >
                               📸 Take Photo
                             </button>
@@ -1322,8 +1390,8 @@ function App() {
 
                   {/* Camera Interface */}
                   {showCamera && (
-                    <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center">
-                      <div className="bg-white rounded-2xl p-6 max-w-lg w-full mx-4">
+                    <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
+                      <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto">
                         <div className="text-center mb-4">
                           <h3 className="text-xl font-bold text-amber-900 mb-2">📸 Capture Bhajan Photo</h3>
                           <p className="text-amber-700 text-sm">Position the bhajan text clearly in the camera view</p>
@@ -1373,13 +1441,13 @@ function App() {
               ) : (
                 /* Bhajan Edit Form */
                 <div>
-                  <h2 className="text-2xl font-bold text-amber-900 mb-6 text-center">
+                  <h2 className="text-xl sm:text-2xl font-bold text-amber-900 mb-4 sm:mb-6 text-center">
                     {editingBhajan ? 'Edit Bhajan' : 'Add New Bhajan'}
                   </h2>
 
-                  <div className="grid md:grid-cols-2 gap-8">
+                  <div className="grid md:grid-cols-2 gap-4 sm:gap-8">
                     {/* Left Column */}
-                    <div className="space-y-6">
+                    <div className="space-y-4 sm:space-y-6">
                       <div>
                         <label className="block text-sm font-semibold text-amber-800 mb-2">
                           Bhajan Title 📖
@@ -1483,7 +1551,7 @@ function App() {
                     </div>
 
                     {/* Right Column */}
-                    <div className="space-y-6">
+                    <div className="space-y-4 sm:space-y-6">
                       <div>
                         <label className="block text-sm font-semibold text-amber-800 mb-2">
                           Bhajan Lyrics 📝
@@ -1534,10 +1602,10 @@ function App() {
                     </div>
                   </div>
 
-                  <div className="flex justify-center mt-8">
+                  <div className="flex justify-center mt-6 sm:mt-8">
                     <button
                       onClick={saveBhajan}
-                      className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white px-8 py-4 rounded-xl font-bold text-lg transition-all duration-300 shadow-lg hover:shadow-xl"
+                      className="w-full sm:w-auto bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white px-6 sm:px-8 py-3 sm:py-4 rounded-xl font-bold text-base sm:text-lg transition-all duration-300 shadow-lg hover:shadow-xl"
                     >
                       {editingBhajan ? '✓ Update Bhajan' : '✓ Save Bhajan'}
                     </button>
@@ -1550,13 +1618,13 @@ function App() {
         ) : (
           /* Main Bhajan Collection View */
           <div>
-            {/* Filters */}
+            {/* Filters - Mobile Responsive */}
             <div className="mb-6">
-              <div className="flex flex-wrap gap-4">
+              <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 sm:gap-4">
                 <select
                   value={filterCategory}
                   onChange={(e) => setFilterCategory(e.target.value)}
-                  className="px-4 py-2 border-2 border-orange-200 rounded-lg focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
+                  className="px-3 py-2 border-2 border-orange-200 rounded-lg focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400 text-sm sm:text-base bg-white"
                 >
                   <option value="">All Categories</option>
                   {[...new Set(bhajans.map(b => b.category).filter(Boolean))].map(category => (
@@ -1567,7 +1635,7 @@ function App() {
                 <select
                   value={filterDeity}
                   onChange={(e) => setFilterDeity(e.target.value)}
-                  className="px-4 py-2 border-2 border-orange-200 rounded-lg focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
+                  className="px-3 py-2 border-2 border-orange-200 rounded-lg focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400 text-sm sm:text-base bg-white"
                 >
                   <option value="">All Deities</option>
                   {[...new Set(bhajans.map(b => b.deity).filter(Boolean))].map(deity => (
@@ -1578,7 +1646,7 @@ function App() {
                 <select
                   value={filterMood}
                   onChange={(e) => setFilterMood(e.target.value)}
-                  className="px-4 py-2 border-2 border-orange-200 rounded-lg focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
+                  className="px-3 py-2 border-2 border-orange-200 rounded-lg focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400 text-sm sm:text-base bg-white"
                 >
                   <option value="">All Moods</option>
                   {[...new Set(bhajans.map(b => b.mood).filter(Boolean))].map(mood => (
@@ -1593,19 +1661,41 @@ function App() {
                     setFilterMood('');
                     setSearchTerm('');
                   }}
-                  className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg transition-colors"
+                  className="px-3 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg transition-colors text-sm sm:text-base"
                 >
                   Clear Filters
                 </button>
               </div>
+
+              {/* Quick filter chips for popular keywords - Mobile friendly scrollable */}
+              {popularKeywords.length > 0 && (
+                <div className="mt-3 overflow-x-auto">
+                  <div className="flex gap-2 pb-2" style={{ minWidth: 'min-content' }}>
+                    <span className="text-xs text-amber-700 self-center whitespace-nowrap">🏷️ Popular:</span>
+                    {popularKeywords.slice(0, 10).map(keyword => (
+                      <button
+                        key={keyword}
+                        onClick={() => setSearchTerm(keyword)}
+                        className={`px-3 py-1 rounded-full text-xs whitespace-nowrap transition-colors ${
+                          searchTerm === keyword
+                            ? 'bg-orange-500 text-white'
+                            : 'bg-orange-100 hover:bg-orange-200 text-orange-800'
+                        }`}
+                      >
+                        {keyword}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Bhajan Grid */}
             {filteredBhajans.length === 0 ? (
-              <div className="text-center py-12">
-                <div className="text-6xl mb-4">🔍</div>
-                <h3 className="text-xl font-semibold text-amber-800 mb-2">No bhajans found</h3>
-                <p className="text-amber-600 mb-4">Try adjusting your search or filters</p>
+              <div className="text-center py-8 sm:py-12 px-4">
+                <div className="text-5xl sm:text-6xl mb-4">🔍</div>
+                <h3 className="text-lg sm:text-xl font-semibold text-amber-800 mb-2">No bhajans found</h3>
+                <p className="text-sm sm:text-base text-amber-600 mb-4">Try adjusting your search or filters</p>
                 <button
                   onClick={() => {
                     setFilterCategory('');
@@ -1613,73 +1703,74 @@ function App() {
                     setFilterMood('');
                     setSearchTerm('');
                   }}
-                  className="bg-orange-500 hover:bg-orange-600 text-white px-6 py-2 rounded-lg transition-colors"
+                  className="bg-orange-500 hover:bg-orange-600 text-white px-5 sm:px-6 py-2 rounded-lg transition-colors text-sm sm:text-base"
                 >
                   Clear All Filters
                 </button>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                 {filteredBhajans.map(bhajan => (
                   <div
                     key={bhajan.id}
-                    className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer overflow-hidden group"
+                    className="relative bg-white/90 backdrop-blur-sm rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer overflow-hidden group"
                     onClick={() => {
                       setSelectedBhajan(bhajan);
                       trackView(bhajan.id);
                     }}
                   >
-                    <div className="p-6">
-                      <h3 className="text-xl font-bold text-amber-900 mb-3 group-hover:text-orange-600 transition-colors line-clamp-2">
+                    <div className="p-4 sm:p-6">
+                      <h3 className="text-lg sm:text-xl font-bold text-amber-900 mb-2 sm:mb-3 group-hover:text-orange-600 transition-colors line-clamp-2 pr-20">
                         {bhajan.title}
                       </h3>
                       
-                      <p className="text-gray-700 mb-4 line-clamp-3 text-sm leading-relaxed">
+                      <p className="text-gray-700 mb-3 sm:mb-4 line-clamp-3 text-sm leading-relaxed">
                         {bhajan.lyrics.slice(0, 120)}...
                       </p>
 
-                      <div className="flex flex-wrap gap-2 mb-4">
+                      <div className="flex flex-wrap gap-1.5 sm:gap-2 mb-3 sm:mb-4">
                         {bhajan.deity && (
-                          <span className="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-xs font-medium">
+                          <span className="bg-purple-100 text-purple-800 px-2 sm:px-3 py-1 rounded-full text-xs font-medium">
                             🙏 {bhajan.deity}
                           </span>
                         )}
                         {bhajan.category && (
-                          <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs font-medium">
+                          <span className="bg-green-100 text-green-800 px-2 sm:px-3 py-1 rounded-full text-xs font-medium">
                             📖 {bhajan.category}
                           </span>
                         )}
                         {bhajan.mood && (
-                          <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-xs font-medium">
+                          <span className="bg-blue-100 text-blue-800 px-2 sm:px-3 py-1 rounded-full text-xs font-medium">
                             💭 {bhajan.mood}
                           </span>
                         )}
                         {bhajan.scale && (
-                          <span className="bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-xs font-medium">
+                          <span className="bg-yellow-100 text-yellow-800 px-2 sm:px-3 py-1 rounded-full text-xs font-medium">
                             🎵 {bhajan.scale}
                           </span>
                         )}
                       </div>
 
                       {bhajan.author && (
-                        <div className="flex items-center">
-                          <span className="text-orange-500 mr-3">✍️</span>
-                          <span className="font-medium">{bhajan.author}</span>
+                        <div className="flex items-center text-sm">
+                          <span className="text-orange-500 mr-2">✍️</span>
+                          <span className="font-medium truncate">{bhajan.author}</span>
                         </div>
                       )}
                     </div>
 
-                    <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <div className="flex space-x-2">
+                    {/* Action buttons - Always visible on mobile, show on hover on desktop */}
+                    <div className="absolute top-3 right-3 sm:top-4 sm:right-4 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                      <div className="flex space-x-1 sm:space-x-2">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             editBhajan(bhajan);
                           }}
-                          className="p-2 bg-white/90 hover:bg-white text-amber-600 hover:text-amber-800 rounded-lg shadow-md transition-colors"
+                          className="p-1.5 sm:p-2 bg-white/90 hover:bg-white text-amber-600 hover:text-amber-800 rounded-lg shadow-md transition-colors"
                           title="Edit"
                         >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                           </svg>
                         </button>
@@ -1689,17 +1780,17 @@ function App() {
                             e.stopPropagation();
                             shareToWhatsApp(bhajan);
                           }}
-                          className="p-2 bg-white/90 hover:bg-white text-green-600 hover:text-green-800 rounded-lg shadow-md transition-colors"
+                          className="p-1.5 sm:p-2 bg-white/90 hover:bg-white text-green-600 hover:text-green-800 rounded-lg shadow-md transition-colors"
                           title="Share"
                         >
-                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                          <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="currentColor" viewBox="0 0 24 24">
                             <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.488"/>
                           </svg>
                         </button>
                       </div>
                     </div>
 
-                    <div className="px-6 py-3 bg-gradient-to-r from-orange-50 to-amber-50 border-t border-orange-100">
+                    <div className="px-4 sm:px-6 py-2 sm:py-3 bg-gradient-to-r from-orange-50 to-amber-50 border-t border-orange-100">
                       <div className="flex items-center justify-between text-xs text-amber-700">
                         <span className="flex items-center">
                           <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
