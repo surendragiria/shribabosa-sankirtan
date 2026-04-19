@@ -121,6 +121,14 @@ function App() {
   const [editingScale, setEditingScale] = useState(false);
   const [tempScale, setTempScale] = useState('');
   
+  // Hindi typing mode
+  const [hindiTypingEnabled, setHindiTypingEnabled] = useState(false);
+  
+  // Online/offline status for PWA
+  const [isOnline, setIsOnline] = useState(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+  
   const [newBhajan, setNewBhajan] = useState({
     title: '',
     lyrics: '',
@@ -167,47 +175,153 @@ function App() {
   // Import bhajans from JSON file
   const importBhajans = (event) => {
     const file = event.target.files[0];
-    if (!file) return;
+    if (!file) {
+      console.log('No file selected');
+      return;
+    }
+
+    console.log('Import started. File:', file.name, 'Size:', file.size, 'Type:', file.type);
+
+    // Validate file is not empty
+    if (file.size === 0) {
+      alert('❌ The file is empty. Please select a valid backup file.');
+      event.target.value = '';
+      return;
+    }
+
+    // Validate file size (reject files > 50MB as suspicious)
+    if (file.size > 50 * 1024 * 1024) {
+      alert('❌ File is too large (over 50MB). Please use a smaller backup file.');
+      event.target.value = '';
+      return;
+    }
 
     const reader = new FileReader();
+    
+    reader.onerror = () => {
+      console.error('FileReader error:', reader.error);
+      alert(`❌ Failed to read the file.\n\nError: ${reader.error?.message || 'Unknown error'}\n\nTry:\n• Re-downloading the file\n• Using a different browser\n• Making sure the file is a .json file`);
+      event.target.value = '';
+    };
+    
     reader.onload = (e) => {
       try {
-        const importedData = JSON.parse(e.target.result);
+        let fileContent = e.target.result;
         
-        // Handle both regular backup and sync file formats
-        const bhajanArray = importedData.bhajans || importedData;
-        
-        if (Array.isArray(bhajanArray) && bhajanArray.length > 0) {
-          const existingTitles = new Set(bhajans.map(b => b.title.toLowerCase()));
-          const newBhajans = bhajanArray.filter(b => 
-            b.title && b.lyrics && !existingTitles.has(b.title.toLowerCase())
-          );
-          
-          if (newBhajans.length > 0) {
-            const maxId = Math.max(...bhajans.map(b => b.id), 0);
-            const bhajanswithNewIds = newBhajans.map((bhajan, index) => ({
-              ...bhajan,
-              id: maxId + index + 1,
-              dateAdded: bhajan.dateAdded || new Date().toISOString(),
-              viewCount: bhajan.viewCount || 0,
-              lastViewed: bhajan.lastViewed || new Date().toISOString()
-            }));
-            
-            setBhajans(prev => [...prev, ...bhajanswithNewIds]);
-            alert(`Successfully imported ${newBhajans.length} new bhajans! 🎉`);
-          } else {
-            alert('No new bhajans found to import (duplicates were skipped).');
-          }
-        } else {
-          alert('Invalid file format. Please select a valid bhajan backup file.');
+        // Remove BOM (Byte Order Mark) if present - common on mobile
+        if (fileContent.charCodeAt(0) === 0xFEFF) {
+          fileContent = fileContent.substring(1);
         }
+        
+        // Trim whitespace
+        fileContent = fileContent.trim();
+        
+        if (!fileContent) {
+          alert('❌ The file appears to be empty after reading.\n\nPlease check that you shared the correct file.');
+          event.target.value = '';
+          return;
+        }
+
+        console.log('File content length:', fileContent.length);
+        console.log('First 100 chars:', fileContent.substring(0, 100));
+
+        let importedData;
+        try {
+          importedData = JSON.parse(fileContent);
+        } catch (parseError) {
+          console.error('JSON parse error:', parseError);
+          alert(`❌ This file is not a valid JSON backup file.\n\nError: ${parseError.message}\n\n✅ Make sure:\n• File ends with .json\n• File was exported from बाबोसा संकीर्तन app\n• File wasn't modified after export\n• File was fully downloaded (not cut off)`);
+          event.target.value = '';
+          return;
+        }
+        
+        // Handle multiple possible formats:
+        // 1. Direct array: [bhajan1, bhajan2, ...]
+        // 2. Wrapped: { bhajans: [...] }
+        // 3. Sync file: { timestamp, bhajans: [...] }
+        let bhajanArray;
+        if (Array.isArray(importedData)) {
+          bhajanArray = importedData;
+        } else if (importedData.bhajans && Array.isArray(importedData.bhajans)) {
+          bhajanArray = importedData.bhajans;
+        } else if (typeof importedData === 'object') {
+          // Try to find any array of bhajans in the object
+          const possibleArrays = Object.values(importedData).filter(v => Array.isArray(v));
+          if (possibleArrays.length > 0) {
+            bhajanArray = possibleArrays[0];
+          }
+        }
+        
+        if (!bhajanArray || !Array.isArray(bhajanArray)) {
+          alert('❌ Unexpected file format.\n\nExpected a list of bhajans but found something else.\n\nPlease share a fresh backup file.');
+          event.target.value = '';
+          return;
+        }
+        
+        if (bhajanArray.length === 0) {
+          alert('⚠️ The backup file contains 0 bhajans.\n\nThe sender may have sent an empty backup.');
+          event.target.value = '';
+          return;
+        }
+
+        console.log(`Found ${bhajanArray.length} bhajans in file`);
+        
+        // Filter bhajans with at least a title
+        const validBhajans = bhajanArray.filter(b => 
+          b && typeof b === 'object' && b.title && typeof b.title === 'string'
+        );
+        
+        if (validBhajans.length === 0) {
+          alert(`❌ Found ${bhajanArray.length} entries but none had valid bhajan data (missing title or lyrics).\n\nPlease ask the sender to export a fresh backup.`);
+          event.target.value = '';
+          return;
+        }
+
+        // Better duplicate detection: use title + first 50 chars of lyrics as key
+        const makeKey = (b) => {
+          const title = (b.title || '').trim().toLowerCase();
+          const lyricsStart = (b.lyrics || '').trim().substring(0, 50).toLowerCase();
+          return `${title}|||${lyricsStart}`;
+        };
+        
+        const existingKeys = new Set(bhajans.map(makeKey));
+        const newBhajans = validBhajans.filter(b => !existingKeys.has(makeKey(b)));
+        const skippedCount = validBhajans.length - newBhajans.length;
+        
+        if (newBhajans.length === 0) {
+          alert(`ℹ️ Import Summary:\n\n📦 File contains: ${validBhajans.length} bhajans\n⏭️ Already exist: ${skippedCount}\n➕ New to add: 0\n\nAll bhajans in the file already exist on this device.`);
+          event.target.value = '';
+          return;
+        }
+        
+        // Add new bhajans with fresh IDs
+        const maxId = bhajans.length > 0 ? Math.max(...bhajans.map(b => b.id || 0), 0) : 0;
+        const bhajanswithNewIds = newBhajans.map((bhajan, index) => ({
+          ...bhajan,
+          id: maxId + index + 1,
+          dateAdded: bhajan.dateAdded || new Date().toISOString(),
+          viewCount: bhajan.viewCount || 0,
+          lastViewed: bhajan.lastViewed || new Date().toISOString(),
+          // Ensure essential fields exist
+          title: bhajan.title || 'Untitled',
+          lyrics: bhajan.lyrics || ''
+        }));
+        
+        setBhajans(prev => [...prev, ...bhajanswithNewIds]);
+        
+        const summary = `🎉 Import Successful!\n\n📦 File contained: ${validBhajans.length} bhajans\n✅ Newly imported: ${newBhajans.length}\n⏭️ Skipped (duplicates): ${skippedCount}\n\n📚 Your collection now has ${bhajans.length + newBhajans.length} bhajans total.`;
+        alert(summary);
+        
       } catch (error) {
-        console.error('Import error:', error);
-        alert('Failed to import file. Please check the file format and try again.');
+        console.error('Unexpected import error:', error);
+        alert(`❌ Unexpected error while importing:\n\n${error.message}\n\nPlease check the browser console for details and try again.`);
+      } finally {
+        event.target.value = '';
       }
     };
-    reader.readAsText(file);
-    event.target.value = '';
+    
+    // Explicitly use UTF-8 encoding for proper Devanagari/Hindi support
+    reader.readAsText(file, 'UTF-8');
   };
 
   // Clear all data (with confirmation)
@@ -465,7 +579,161 @@ function App() {
   };
 
   // Scale editing functions
-  const startEditingScale = () => {
+  // Hindi transliteration map - Roman to Devanagari (Google Hindi typing style)
+  // This provides word-by-word conversion of Hindi written in English letters
+  const hindiTransliterationMap = {
+    // Common bhajan words
+    'om': 'ॐ', 'aum': 'ॐ',
+    'jai': 'जय', 'jay': 'जय', 'jaya': 'जय',
+    'namah': 'नमः', 'namaha': 'नमः',
+    'shri': 'श्री', 'sri': 'श्री', 'shree': 'श्री',
+    'bhagwan': 'भगवान', 'bhagavan': 'भगवान',
+    'bhakt': 'भक्त', 'bhakti': 'भक्ति',
+    'bhajan': 'भजन', 'kirtan': 'कीर्तन',
+    'aarti': 'आरती', 'arti': 'आरती',
+    'mantra': 'मंत्र', 'stotra': 'स्तोत्र', 'chalisa': 'चालीसा',
+    'mandir': 'मंदिर', 'devta': 'देवता',
+    // Deity names
+    'krishna': 'कृष्ण', 'krsna': 'कृष्ण', 'kishan': 'किशन',
+    'ram': 'राम', 'rama': 'राम', 'raam': 'राम',
+    'shiv': 'शिव', 'shiva': 'शिव', 'shankar': 'शंकर',
+    'ganesh': 'गणेश', 'ganesha': 'गणेश', 'ganpati': 'गणपति', 'ganapati': 'गणपति',
+    'hanuman': 'हनुमान', 'bajrang': 'बजरंग',
+    'durga': 'दुर्गा', 'maa': 'माँ', 'mata': 'माता',
+    'saraswati': 'सरस्वती', 'lakshmi': 'लक्ष्मी',
+    'radha': 'राधा', 'sita': 'सीता', 'parvati': 'पार्वती',
+    'vishnu': 'विष्णु', 'brahma': 'ब्रह्मा',
+    'govind': 'गोविंद', 'gopal': 'गोपाल', 'mohan': 'मोहन', 'murari': 'मुरारी',
+    'kanha': 'कान्हा', 'kanhaiya': 'कन्हैया',
+    'jagdish': 'जगदीश', 'jagadish': 'जगदीश',
+    // Common words
+    'hare': 'हरे', 'hari': 'हरि',
+    'prabhu': 'प्रभु', 'swami': 'स्वामी',
+    'dev': 'देव', 'deva': 'देव',
+    'mahadev': 'महादेव', 'mahadeva': 'महादेव',
+    'bhole': 'भोले', 'bholanath': 'भोलेनाथ',
+    'guru': 'गुरु', 'satguru': 'सतगुरु',
+    'baba': 'बाबा', 'bapu': 'बापू',
+    'mere': 'मेरे', 'meri': 'मेरी', 'mera': 'मेरा',
+    'tere': 'तेरे', 'teri': 'तेरी', 'tera': 'तेरा',
+    'humko': 'हमको', 'tumko': 'तुमको',
+    'hum': 'हम', 'tum': 'तुम', 'main': 'मैं', 'mujhe': 'मुझे',
+    'hai': 'है', 'hain': 'हैं', 'tha': 'था', 'thi': 'थी', 'the': 'थे',
+    'ho': 'हो', 'hota': 'होता', 'hoti': 'होती',
+    'ka': 'का', 'ki': 'की', 'ke': 'के', 'ko': 'को',
+    'se': 'से', 'mein': 'में', 'par': 'पर', 'aur': 'और',
+    'nahi': 'नहीं', 'nahin': 'नहीं', 'kyun': 'क्यों', 'kya': 'क्या', 'kaise': 'कैसे',
+    'bhi': 'भी', 'bas': 'बस', 'sirf': 'सिर्फ',
+    // Emotions/devotion
+    'prem': 'प्रेम', 'pyar': 'प्यार', 'pyaar': 'प्यार',
+    'dil': 'दिल', 'man': 'मन', 'hriday': 'हृदय',
+    'aatma': 'आत्मा', 'atma': 'आत्मा',
+    'shanti': 'शांति', 'sukh': 'सुख', 'dukh': 'दुख',
+    'anand': 'आनंद', 'ananda': 'आनंद',
+    'daya': 'दया', 'karuna': 'करुणा', 'kripa': 'कृपा',
+    'sewa': 'सेवा', 'seva': 'सेवा',
+    'puja': 'पूजा', 'pooja': 'पूजा',
+    'dhyan': 'ध्यान', 'dhyana': 'ध्यान',
+    'yog': 'योग', 'yoga': 'योग',
+    'sanskar': 'संस्कार', 'dharma': 'धर्म', 'karm': 'कर्म', 'karma': 'कर्म',
+    'sangat': 'संगत', 'satsang': 'सत्संग',
+    // Places
+    'vrindavan': 'वृंदावन', 'mathura': 'मथुरा', 'ayodhya': 'अयोध्या',
+    'kashi': 'काशी', 'kailash': 'कैलाश',
+    // Numbers/common
+    'ek': 'एक', 'do': 'दो', 'teen': 'तीन', 'char': 'चार', 'paanch': 'पाँच',
+    'nam': 'नाम', 'naam': 'नाम',
+    'ghar': 'घर', 'sansar': 'संसार', 'jagat': 'जगत',
+    'din': 'दिन', 'raat': 'रात', 'samay': 'समय',
+    'babosa': 'बाबोसा', 'sankirtan': 'संकीर्तन'
+  };
+
+  // Phonetic rules for unknown words (fallback)
+  const transliterateWord = (word) => {
+    if (!word) return word;
+    const lower = word.toLowerCase();
+    
+    // Check dictionary first
+    if (hindiTransliterationMap[lower]) {
+      return hindiTransliterationMap[lower];
+    }
+    
+    // Return as-is if not found (user can manually fix)
+    return word;
+  };
+
+  // Transliterate full text - called on spacebar press
+  const transliterateOnSpace = (text, cursorPos) => {
+    // Find the word just before the cursor (between cursor and last space/newline)
+    let startIdx = cursorPos - 1;
+    while (startIdx > 0 && !/[\s\n]/.test(text[startIdx - 1])) {
+      startIdx--;
+    }
+    
+    const wordToTransliterate = text.substring(startIdx, cursorPos).trim();
+    if (!wordToTransliterate || !/^[a-zA-Z]+$/.test(wordToTransliterate)) {
+      return { text, newCursorPos: cursorPos + 1 };
+    }
+    
+    const translated = transliterateWord(wordToTransliterate);
+    if (translated === wordToTransliterate) {
+      return { text, newCursorPos: cursorPos + 1 };
+    }
+    
+    const newText = text.substring(0, startIdx) + translated + text.substring(cursorPos);
+    const newCursorPos = startIdx + translated.length + 1;
+    return { text: newText, newCursorPos };
+  };
+
+  // Handle lyrics input with optional transliteration
+  const handleLyricsChange = (e, isEditing) => {
+    const value = e.target.value;
+    const cursorPos = e.target.selectionStart;
+    
+    // If Hindi typing is off, just update normally
+    if (!hindiTypingEnabled) {
+      if (isEditing) {
+        setEditingBhajan(prev => ({ ...prev, lyrics: value }));
+      } else {
+        setNewBhajan(prev => ({ ...prev, lyrics: value }));
+      }
+      return;
+    }
+    
+    // Hindi typing is on - check if user just typed a space
+    const prevValue = isEditing ? editingBhajan.lyrics : newBhajan.lyrics;
+    const justTypedSpace = value.length > prevValue.length && value[cursorPos - 1] === ' ';
+    
+    if (justTypedSpace) {
+      // Transliterate the word just typed
+      const textBeforeSpace = value.substring(0, cursorPos - 1);
+      const result = transliterateOnSpace(textBeforeSpace, cursorPos - 1);
+      const newValue = result.text + ' ' + value.substring(cursorPos);
+      
+      if (isEditing) {
+        setEditingBhajan(prev => ({ ...prev, lyrics: newValue }));
+      } else {
+        setNewBhajan(prev => ({ ...prev, lyrics: newValue }));
+      }
+      
+      // Restore cursor position after React re-renders
+      setTimeout(() => {
+        if (e.target) {
+          e.target.selectionStart = result.newCursorPos;
+          e.target.selectionEnd = result.newCursorPos;
+        }
+      }, 0);
+    } else {
+      // Normal typing - just update
+      if (isEditing) {
+        setEditingBhajan(prev => ({ ...prev, lyrics: value }));
+      } else {
+        setNewBhajan(prev => ({ ...prev, lyrics: value }));
+      }
+    }
+  };
+
+
     setTempScale(selectedBhajan?.scale || '');
     setEditingScale(true);
   };
@@ -533,6 +801,26 @@ function App() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }, 50);
   };
+
+  // Online/offline status listener for PWA
+  useEffect(() => {
+    const handleOnline = () => {
+      console.log('🌐 Back online');
+      setIsOnline(true);
+    };
+    const handleOffline = () => {
+      console.log('📴 Gone offline - app continues to work');
+      setIsOnline(false);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // Browser history integration - enables swipe-back gesture and back button
   useEffect(() => {
@@ -779,14 +1067,26 @@ function App() {
       .slice(0, 6);
   };
 
-  // Status display - shows saved count
+  // Status display - shows saved count and online/offline status
   const SyncStatusDisplay = () => {
     return (
-      <div className="flex items-center text-xs">
-        <span className="mr-1">💾</span>
-        <span className="text-green-600">
-          {bhajans.length} bhajans saved locally
-        </span>
+      <div className="flex items-center text-xs gap-2">
+        <div className="flex items-center">
+          <span className="mr-1">💾</span>
+          <span className="text-green-600">
+            {bhajans.length} bhajans saved
+          </span>
+        </div>
+        <div className={`flex items-center px-2 py-0.5 rounded-full ${
+          isOnline 
+            ? 'bg-green-100 text-green-700' 
+            : 'bg-amber-100 text-amber-800 animate-pulse'
+        }`}>
+          <span className="mr-1">{isOnline ? '🌐' : '📴'}</span>
+          <span className="font-medium">
+            {isOnline ? 'Online' : 'Offline mode'}
+          </span>
+        </div>
       </div>
     );
   };
@@ -984,7 +1284,7 @@ function App() {
                   <span className="text-sm font-medium">Import Backup</span>
                   <input 
                     type="file" 
-                    accept=".json"
+                    accept=".json,application/json,text/plain,text/json,*/*"
                     onChange={importBhajans}
                     className="hidden"
                   />
@@ -1336,8 +1636,11 @@ function App() {
                     ) : (
                       <div className="space-y-4 sm:space-y-6">
                         <div>
+                          <p className="text-amber-700 text-sm sm:text-base mb-4">
+                            Choose how you want to add your bhajan:
+                          </p>
                           <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
-                            <label className="inline-block bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white px-6 sm:px-8 py-3 sm:py-4 rounded-xl font-semibold cursor-pointer transition-all duration-300 shadow-lg hover:shadow-xl text-sm sm:text-base">
+                            <label className="inline-block bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white px-4 sm:px-6 py-3 sm:py-4 rounded-xl font-semibold cursor-pointer transition-all duration-300 shadow-lg hover:shadow-xl text-sm sm:text-base">
                               📁 Choose Files
                               <input 
                                 type="file" 
@@ -1350,11 +1653,25 @@ function App() {
                             
                             <button
                               onClick={startCamera}
-                              className="inline-block bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white px-6 sm:px-8 py-3 sm:py-4 rounded-xl font-semibold transition-all duration-300 shadow-lg hover:shadow-xl text-sm sm:text-base"
+                              className="inline-block bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white px-4 sm:px-6 py-3 sm:py-4 rounded-xl font-semibold transition-all duration-300 shadow-lg hover:shadow-xl text-sm sm:text-base"
                             >
                               📸 Take Photo
                             </button>
+
+                            <button
+                              onClick={() => {
+                                // Show the form directly with empty extracted text
+                                setExtractedText(' ');
+                                setNewBhajan(prev => ({ ...prev, lyrics: '' }));
+                              }}
+                              className="inline-block bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white px-4 sm:px-6 py-3 sm:py-4 rounded-xl font-semibold transition-all duration-300 shadow-lg hover:shadow-xl text-sm sm:text-base"
+                            >
+                              ✍️ Type / Paste
+                            </button>
                           </div>
+                          <p className="text-xs text-amber-600 mt-4">
+                            💡 <strong>Tip:</strong> Use "Type / Paste" to directly type a bhajan or paste from clipboard. Hindi typing supported!
+                          </p>
                         </div>
                       </div>
                     )}
@@ -1525,19 +1842,57 @@ function App() {
                     {/* Right Column */}
                     <div className="space-y-4 sm:space-y-6">
                       <div>
-                        <label className="block text-sm font-semibold text-amber-800 mb-2">
-                          Bhajan Lyrics 📝
-                        </label>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="block text-sm font-semibold text-amber-800">
+                            Bhajan Lyrics 📝
+                          </label>
+                          {/* Hindi Typing Toggle */}
+                          <button
+                            type="button"
+                            onClick={() => setHindiTypingEnabled(!hindiTypingEnabled)}
+                            className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                              hindiTypingEnabled
+                                ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-md'
+                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                            }`}
+                            title={hindiTypingEnabled ? 'Disable Hindi typing' : 'Enable Hindi typing'}
+                          >
+                            <span>{hindiTypingEnabled ? '🇮🇳' : '🔤'}</span>
+                            <span>{hindiTypingEnabled ? 'हिंदी ON' : 'Hindi OFF'}</span>
+                          </button>
+                        </div>
+                        
+                        {hindiTypingEnabled && (
+                          <div className="mb-2 p-2 bg-orange-50 border border-orange-200 rounded-lg">
+                            <p className="text-xs text-orange-800">
+                              ✨ <strong>Hindi typing enabled!</strong> Type in English, press <kbd className="bg-white px-1.5 py-0.5 rounded border text-xs">space</kbd> to convert.
+                            </p>
+                            <p className="text-xs text-orange-600 mt-1">
+                              Examples: <code className="bg-white px-1 rounded">ram</code> → राम, <code className="bg-white px-1 rounded">krishna</code> → कृष्ण, <code className="bg-white px-1 rounded">jai</code> → जय
+                            </p>
+                          </div>
+                        )}
+                        
                         <textarea
                           value={editingBhajan ? editingBhajan.lyrics : newBhajan.lyrics}
-                          onChange={(e) => editingBhajan ?
-                            setEditingBhajan(prev => ({...prev, lyrics: e.target.value})) :
-                            setNewBhajan(prev => ({...prev, lyrics: e.target.value}))
-                          }
+                          onChange={(e) => handleLyricsChange(e, !!editingBhajan)}
                           rows={12}
-                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400 font-mono"
-                          placeholder="पूर्ण भजन के बोल यहाँ लिखें..."
+                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400 font-mono text-base"
+                          placeholder={hindiTypingEnabled 
+                            ? "Type: jai shri ram krishna govind... (press space to convert)" 
+                            : "पूर्ण भजन के बोल यहाँ लिखें..."}
+                          style={{ lineHeight: '1.8' }}
                         />
+                        
+                        {/* Character/line counter */}
+                        <div className="mt-1 flex justify-between text-xs text-gray-500">
+                          <span>
+                            {(editingBhajan ? editingBhajan.lyrics : newBhajan.lyrics).length} characters
+                          </span>
+                          <span>
+                            {(editingBhajan ? editingBhajan.lyrics : newBhajan.lyrics).split('\n').length} lines
+                          </span>
+                        </div>
                       </div>
 
                       <div>
