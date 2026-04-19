@@ -1,9 +1,7 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
 function App() {
-  // Auto-sync state
-  const [autoExportEnabled, setAutoExportEnabled] = useState(true);
-  const [lastAutoExport, setLastAutoExport] = useState(null);
+  // Sync state
   const [syncInstructions, setSyncInstructions] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -139,58 +137,18 @@ function App() {
     source: ''
   });
 
-  // Auto-export function
-  const autoExportToDownloads = useCallback((bhajanData) => {
-    if (!autoExportEnabled) return;
-    
-    try {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const filename = `babosa-sankirtan-sync-${timestamp}.json`;
-      
-      const dataStr = JSON.stringify({
-        timestamp: new Date().toISOString(),
-        device: navigator.userAgent.includes('Mobile') ? 'mobile' : 'desktop',
-        bhajans: bhajanData,
-        version: '2.0.0'
-      }, null, 2);
-      
-      const dataBlob = new Blob([dataStr], { type: 'application/json' });
-      const url = URL.createObjectURL(dataBlob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      link.style.display = 'none';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      
-      setLastAutoExport(new Date());
-      console.log('Auto-exported bhajans to Downloads:', filename);
-    } catch (error) {
-      console.error('Auto-export failed:', error);
-    }
-  }, [autoExportEnabled]);
-
-  // Save to localStorage and auto-export
+  // Save to localStorage only - NO automatic downloads
   useEffect(() => {
     try {
       localStorage.setItem('babosa-sankirtan-bhajans', JSON.stringify(bhajans));
       console.log('Saved', bhajans.length, 'bhajans to localStorage');
-      
-      // Auto-export when data changes (debounced)
-      const exportTimer = setTimeout(() => {
-        autoExportToDownloads(bhajans);
-      }, 2000); // Wait 2 seconds after last change
-      
-      return () => clearTimeout(exportTimer);
     } catch (error) {
       console.error('Error saving bhajans:', error);
       if (error.name === 'QuotaExceededError') {
         alert('Storage limit reached. Please export your bhajans as backup and clear some data.');
       }
     }
-  }, [bhajans, autoExportToDownloads]);
+  }, [bhajans]);
 
   // Check for Google Drive sync files
   const checkForDriveUpdates = () => {
@@ -805,20 +763,63 @@ function App() {
     }
   };
 
-  // Auto-sync status component
+  // Find similar bhajans based on deity, category, mood, and shared keywords
+  const getSimilarBhajans = (currentBhajan) => {
+    if (!currentBhajan) return [];
+    
+    const currentKeywords = (currentBhajan.keywords || '')
+      .toLowerCase()
+      .split(',')
+      .map(k => k.trim())
+      .filter(Boolean);
+    
+    return bhajans
+      .filter(b => b.id !== currentBhajan.id)
+      .map(b => {
+        let score = 0;
+        const reasons = [];
+        
+        // Same deity (3 points) - most important
+        if (b.deity && currentBhajan.deity && b.deity === currentBhajan.deity) {
+          score += 3;
+          reasons.push(`🙏 ${b.deity}`);
+        }
+        // Same category (2 points)
+        if (b.category && currentBhajan.category && b.category === currentBhajan.category) {
+          score += 2;
+          reasons.push(`📖 ${b.category}`);
+        }
+        // Same mood (1 point)
+        if (b.mood && currentBhajan.mood && b.mood === currentBhajan.mood) {
+          score += 1;
+          reasons.push(`💭 ${b.mood}`);
+        }
+        // Same scale (2 points) - useful for musicians
+        if (b.scale && currentBhajan.scale && b.scale === currentBhajan.scale) {
+          score += 2;
+          reasons.push(`🎵 ${b.scale}`);
+        }
+        // Shared keywords (1 point each)
+        if (b.keywords && currentKeywords.length > 0) {
+          const bKeywords = b.keywords.toLowerCase().split(',').map(k => k.trim()).filter(Boolean);
+          const sharedCount = currentKeywords.filter(k => bKeywords.includes(k)).length;
+          score += sharedCount;
+        }
+        
+        return { bhajan: b, score, reasons };
+      })
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 6);
+  };
+
+  // Status display - shows saved count
   const SyncStatusDisplay = () => {
     return (
       <div className="flex items-center text-xs">
-        <span className="mr-1">
-          {autoExportEnabled ? '📤' : '📱'}
-        </span>
+        <span className="mr-1">💾</span>
         <span className="text-green-600">
-          {autoExportEnabled 
-            ? lastAutoExport 
-              ? `Auto-exported ${lastAutoExport.toLocaleTimeString()}`
-              : 'Auto-export enabled'
-            : 'Local only'
-          }
+          {bhajans.length} bhajans saved locally
         </span>
       </div>
     );
@@ -1048,16 +1049,6 @@ function App() {
                     <li>4. Click "Load from Drive"</li>
                   </ol>
                 </div>
-
-                <label className="flex items-center p-2 text-amber-700">
-                  <input
-                    type="checkbox"
-                    checked={autoExportEnabled}
-                    onChange={(e) => setAutoExportEnabled(e.target.checked)}
-                    className="mr-2"
-                  />
-                  <span className="text-xs">Auto-export to Downloads</span>
-                </label>
               </div>
 
               {/* Data Management Section */}
@@ -1263,9 +1254,23 @@ function App() {
 
               <div className="mb-6 sm:mb-8">
                 <div className="bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl p-4 sm:p-6">
-                  <pre className="whitespace-pre-wrap text-base sm:text-lg leading-relaxed text-amber-900 font-medium break-words">
-                    {selectedBhajan.lyrics}
-                  </pre>
+                  <div className="text-base sm:text-lg leading-relaxed text-amber-900 font-medium">
+                    {selectedBhajan.lyrics.split('\n').map((line, idx) => {
+                      const trimmed = line.trim();
+                      if (trimmed === '') {
+                        return <div key={idx} className="h-3 sm:h-4" />;
+                      }
+                      return (
+                        <div 
+                          key={idx} 
+                          className="break-words py-0.5"
+                          style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}
+                        >
+                          {line}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
@@ -1310,6 +1315,74 @@ function App() {
                   Delete
                 </button>
               </div>
+
+              {/* Similar Bhajans Section */}
+              {(() => {
+                const similar = getSimilarBhajans(selectedBhajan);
+                if (similar.length === 0) return null;
+                
+                return (
+                  <div className="mt-8 sm:mt-12 pt-6 sm:pt-8 border-t-2 border-orange-100">
+                    <div className="flex items-center mb-4 sm:mb-6">
+                      <span className="text-2xl sm:text-3xl mr-3">🎶</span>
+                      <div>
+                        <h3 className="text-lg sm:text-2xl font-bold text-amber-900">
+                          Similar Bhajans
+                        </h3>
+                        <p className="text-xs sm:text-sm text-amber-600">
+                          आपको ये भी पसंद आ सकते हैं
+                        </p>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                      {similar.map(({ bhajan, reasons }) => (
+                        <div
+                          key={bhajan.id}
+                          onClick={() => {
+                            setSelectedBhajan(bhajan);
+                            trackView(bhajan.id);
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className="bg-gradient-to-br from-orange-50 to-amber-50 hover:from-orange-100 hover:to-amber-100 rounded-xl p-3 sm:p-4 cursor-pointer transition-all duration-300 border border-orange-200 hover:border-orange-400 hover:shadow-md"
+                        >
+                          <h4 className="font-bold text-amber-900 mb-2 line-clamp-2 text-sm sm:text-base">
+                            {bhajan.title}
+                          </h4>
+                          
+                          {/* Preview of lyrics */}
+                          <p className="text-xs text-gray-600 line-clamp-2 mb-2 leading-relaxed">
+                            {bhajan.lyrics.slice(0, 80)}...
+                          </p>
+                          
+                          {/* Match reasons */}
+                          {reasons.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mb-2">
+                              {reasons.slice(0, 3).map((reason, i) => (
+                                <span
+                                  key={i}
+                                  className="text-xs bg-white/70 text-amber-700 px-2 py-0.5 rounded-full border border-orange-200"
+                                >
+                                  {reason}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          
+                          <div className="flex items-center justify-between text-xs text-amber-600">
+                            {bhajan.author && (
+                              <span className="truncate mr-2">✍️ {bhajan.author}</span>
+                            )}
+                            <span className="text-orange-500 font-semibold whitespace-nowrap">
+                              Read →
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
 
