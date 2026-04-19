@@ -563,11 +563,15 @@ function App() {
     }
 
     if (editingBhajan) {
-      setBhajans(prev => prev.map(b => b.id === editingBhajan.id ? bhajanData : b));
-      // Sync update to cloud
-      if (firestoreRef.current && bhajanData.cloudId) {
-        syncBhajanToCloud(bhajanData);
+      // Sync to cloud - works for both new-to-cloud AND existing cloud bhajans
+      let finalBhajan = bhajanData;
+      if (firestoreRef.current) {
+        const cloudId = await syncBhajanToCloud(bhajanData);
+        if (cloudId) {
+          finalBhajan = { ...bhajanData, cloudId };
+        }
       }
+      setBhajans(prev => prev.map(b => b.id === editingBhajan.id ? finalBhajan : b));
       setEditingBhajan(null);
     } else {
       const newId = Math.max(...bhajans.map(b => b.id), 0) + 1;
@@ -769,15 +773,21 @@ function App() {
     setEditingScale(true);
   };
 
-  const saveScale = () => {
+  const saveScale = async () => {
     if (selectedBhajan) {
       const updatedBhajan = { ...selectedBhajan, scale: tempScale };
-      setBhajans(prev => prev.map(b => b.id === selectedBhajan.id ? updatedBhajan : b));
-      setSelectedBhajan(updatedBhajan);
-      // Sync to cloud
-      if (firestoreRef.current && updatedBhajan.cloudId) {
-        syncBhajanToCloud(updatedBhajan);
+      
+      // Sync to cloud - works for both new-to-cloud AND existing cloud bhajans
+      let finalBhajan = updatedBhajan;
+      if (firestoreRef.current) {
+        const cloudId = await syncBhajanToCloud(updatedBhajan);
+        if (cloudId) {
+          finalBhajan = { ...updatedBhajan, cloudId };
+        }
       }
+      
+      setBhajans(prev => prev.map(b => b.id === selectedBhajan.id ? finalBhajan : b));
+      setSelectedBhajan(finalBhajan);
       setEditingScale(false);
       setTempScale('');
     }
@@ -832,15 +842,27 @@ function App() {
 
   // Open bhajan with scroll-to-top AND push browser history state
   const openBhajan = (bhajan) => {
+    // Scroll instantly BEFORE state change so the new page renders at top
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    
     setSelectedBhajan(bhajan);
     trackView(bhajan.id);
     // Push to browser history so back button/swipe gesture works
     window.history.pushState({ view: 'bhajan', id: bhajan.id }, '', window.location.pathname);
-    // Scroll to top so title and lyrics are visible from the start
-    setTimeout(() => {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }, 50);
   };
+
+  // Whenever selectedBhajan changes, reset scroll to top
+  // This ensures we always see the title/lyrics first
+  useEffect(() => {
+    if (selectedBhajan) {
+      // Multiple attempts to ensure scroll happens even on mobile browsers
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+      // Backup attempt after render
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+      });
+    }
+  }, [selectedBhajan]);
 
   // Online/offline status listener for PWA
   useEffect(() => {
@@ -923,22 +945,47 @@ function App() {
               cloudBhajans.push({ ...data, cloudId: doc.id });
             });
 
-            if (cloudBhajans.length > 0) {
-              console.log(`🔄 Synced ${cloudBhajans.length} bhajans from cloud`);
+            console.log(`🔄 Received snapshot with ${cloudBhajans.length} bhajans from cloud`);
+            
+            // Build a Set of cloud bhajan IDs AND titles for dedup matching
+            const cloudIds = new Set(cloudBhajans.map(b => b.id));
+            const cloudTitleKeys = new Set(
+              cloudBhajans.map(b => 
+                `${(b.title || '').trim().toLowerCase()}|||${(b.lyrics || '').trim().substring(0, 50).toLowerCase()}`
+              )
+            );
+            
+            setBhajans((localBhajans) => {
+              // Start with all cloud bhajans (source of truth for synced items)
+              const merged = [...cloudBhajans];
               
-              // Merge cloud bhajans with local ones (cloud wins for conflicts)
-              setBhajans((localBhajans) => {
-                const merged = [...cloudBhajans];
-                // Add local-only bhajans that aren't in cloud yet
-                localBhajans.forEach((local) => {
-                  if (!local.cloudId) {
-                    merged.push(local);
-                  }
-                });
-                return merged;
+              // Track which local bhajans to keep
+              const seenInMerged = new Set(merged.map(b => 
+                `${(b.title || '').trim().toLowerCase()}|||${(b.lyrics || '').trim().substring(0, 50).toLowerCase()}`
+              ));
+              
+              localBhajans.forEach((local) => {
+                const localKey = `${(local.title || '').trim().toLowerCase()}|||${(local.lyrics || '').trim().substring(0, 50).toLowerCase()}`;
+                
+                // Skip if:
+                // 1. Same ID already in cloud (standard duplicate check)
+                // 2. Has a cloudId — meaning it was cloud-synced but now missing from cloud (i.e., deleted on another device)
+                // 3. Same title+lyrics already in merged (content-based dedup for recovery)
+                if (cloudIds.has(local.id)) return;
+                if (local.cloudId) return;
+                if (cloudTitleKeys.has(localKey)) return;
+                if (seenInMerged.has(localKey)) return;
+                
+                seenInMerged.add(localKey);
+                merged.push(local);
               });
-              setLastSyncTime(new Date());
-            }
+              
+              // Sort by ID for consistency
+              merged.sort((a, b) => (a.id || 0) - (b.id || 0));
+              console.log(`✅ Merged result: ${merged.length} bhajans (${cloudBhajans.length} from cloud + ${merged.length - cloudBhajans.length} local-only)`);
+              return merged;
+            });
+            setLastSyncTime(new Date());
             setSyncStatus('connected');
           },
           (error) => {
@@ -1120,6 +1167,58 @@ function App() {
     
     setSyncStatus('connected');
     alert(`✅ Upload complete!\n\n📤 Uploaded: ${uploaded}\n❌ Failed: ${failed}`);
+  };
+
+  // Clean up duplicate bhajans (same title + lyrics)
+  const cleanupDuplicates = async () => {
+    const seen = new Map();
+    const duplicates = [];
+    const keep = [];
+    
+    bhajans.forEach((bhajan) => {
+      const key = `${(bhajan.title || '').trim().toLowerCase()}|||${(bhajan.lyrics || '').trim().substring(0, 100).toLowerCase()}`;
+      
+      if (seen.has(key)) {
+        // This is a duplicate
+        const existing = seen.get(key);
+        // Prefer the one WITH cloudId (keep the cloud-synced one)
+        if (bhajan.cloudId && !existing.cloudId) {
+          // Current bhajan is cloud-synced, existing is not: replace
+          duplicates.push(existing);
+          seen.set(key, bhajan);
+          // Remove old and keep new
+          const idx = keep.indexOf(existing);
+          if (idx > -1) keep.splice(idx, 1);
+          keep.push(bhajan);
+        } else {
+          // Keep existing, mark current as duplicate
+          duplicates.push(bhajan);
+        }
+      } else {
+        seen.set(key, bhajan);
+        keep.push(bhajan);
+      }
+    });
+    
+    if (duplicates.length === 0) {
+      alert('✅ No duplicates found! Your collection is clean.');
+      return;
+    }
+    
+    if (!window.confirm(`Found ${duplicates.length} duplicate bhajans.\n\nKeep ${keep.length} unique bhajans and remove ${duplicates.length} duplicates?\n\nThis will also delete duplicates from cloud if synced.`)) {
+      return;
+    }
+    
+    // Delete duplicates from cloud if they have cloudId
+    for (const dup of duplicates) {
+      if (dup.cloudId && firestoreRef.current) {
+        await deleteBhajanFromCloud(dup.cloudId);
+      }
+    }
+    
+    // Update local state with only unique bhajans
+    setBhajans(keep);
+    alert(`✅ Cleanup complete!\n\n🗑️ Removed: ${duplicates.length} duplicates\n✅ Kept: ${keep.length} unique bhajans`);
   };
 
   // Browser history integration - enables swipe-back gesture and back button
@@ -1615,6 +1714,16 @@ function App() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
                       </svg>
                       <span className="text-sm font-medium">Upload All Local to Cloud</span>
+                    </button>
+                    
+                    <button
+                      onClick={cleanupDuplicates}
+                      className="w-full flex items-center p-3 rounded-lg hover:bg-yellow-100 text-yellow-700 transition-colors"
+                    >
+                      <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      <span className="text-sm font-medium">🧹 Clean Up Duplicates</span>
                     </button>
                     
                     <button
