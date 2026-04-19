@@ -128,6 +128,22 @@ function App() {
   const [isOnline, setIsOnline] = useState(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
+
+  // Firebase Cloud Sync State
+  const [firebaseConfig, setFirebaseConfig] = useState(() => {
+    try {
+      const saved = localStorage.getItem('babosa-firebase-config');
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
+  const [roomCode, setRoomCode] = useState(() => localStorage.getItem('babosa-room-code') || '');
+  const [showSyncSetup, setShowSyncSetup] = useState(false);
+  const [syncStatus, setSyncStatus] = useState('not-setup'); // 'not-setup', 'connecting', 'connected', 'error', 'syncing'
+  const [lastSyncTime, setLastSyncTime] = useState(null);
+  const [tempFirebaseConfigText, setTempFirebaseConfigText] = useState('');
+  const [tempRoomCode, setTempRoomCode] = useState('');
+  const firestoreRef = useRef(null);
+  const unsubscribeRef = useRef(null);
   
   const [newBhajan, setNewBhajan] = useState({
     title: '',
@@ -538,7 +554,7 @@ function App() {
     };
   };
 
-  const saveBhajan = () => {
+  const saveBhajan = async () => {
     const bhajanData = editingBhajan ? editingBhajan : newBhajan;
     
     if (!bhajanData.title || !bhajanData.lyrics) {
@@ -548,6 +564,10 @@ function App() {
 
     if (editingBhajan) {
       setBhajans(prev => prev.map(b => b.id === editingBhajan.id ? bhajanData : b));
+      // Sync update to cloud
+      if (firestoreRef.current && bhajanData.cloudId) {
+        syncBhajanToCloud(bhajanData);
+      }
       setEditingBhajan(null);
     } else {
       const newId = Math.max(...bhajans.map(b => b.id), 0) + 1;
@@ -558,6 +578,15 @@ function App() {
         viewCount: 0,
         lastViewed: new Date().toISOString()
       };
+      
+      // Sync new bhajan to cloud and get cloudId
+      if (firestoreRef.current) {
+        const cloudId = await syncBhajanToCloud(bhajanWithId);
+        if (cloudId) {
+          bhajanWithId.cloudId = cloudId;
+        }
+      }
+      
       setBhajans(prev => [...prev, bhajanWithId]);
     }
 
@@ -575,7 +604,8 @@ function App() {
     });
     setExtractedText('');
     
-    alert(`Bhajan ${editingBhajan ? 'updated' : 'saved'} successfully! 🎉`);
+    const syncMsg = firestoreRef.current ? ' (synced to cloud)' : '';
+    alert(`Bhajan ${editingBhajan ? 'updated' : 'saved'} successfully!${syncMsg} 🎉`);
   };
 
   // Scale editing functions
@@ -744,6 +774,10 @@ function App() {
       const updatedBhajan = { ...selectedBhajan, scale: tempScale };
       setBhajans(prev => prev.map(b => b.id === selectedBhajan.id ? updatedBhajan : b));
       setSelectedBhajan(updatedBhajan);
+      // Sync to cloud
+      if (firestoreRef.current && updatedBhajan.cloudId) {
+        syncBhajanToCloud(updatedBhajan);
+      }
       setEditingScale(false);
       setTempScale('');
     }
@@ -756,9 +790,14 @@ function App() {
 
   const deleteBhajan = (id) => {
     if (window.confirm('Are you sure you want to delete this bhajan?')) {
+      const bhajanToDelete = bhajans.find(b => b.id === id);
       setBhajans(prev => prev.filter(b => b.id !== id));
       setSelectedBhajan(null);
       setEditingBhajan(null);
+      // Delete from cloud
+      if (bhajanToDelete && bhajanToDelete.cloudId) {
+        deleteBhajanFromCloud(bhajanToDelete.cloudId);
+      }
       alert('Bhajan deleted successfully.');
     }
   };
@@ -822,6 +861,266 @@ function App() {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
+  // ==========================================
+  // FIREBASE CLOUD SYNC
+  // ==========================================
+  
+  // Sanitize room code to be Firestore-safe
+  const sanitizeRoomCode = (code) => {
+    return code.toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 30) || 'default';
+  };
+
+  // Initialize Firebase when config is available
+  useEffect(() => {
+    if (!firebaseConfig || !roomCode) {
+      setSyncStatus('not-setup');
+      return;
+    }
+
+    if (typeof window === 'undefined' || !window.firebase) {
+      console.log('Firebase SDK not loaded yet, waiting...');
+      const timer = setTimeout(() => {
+        if (window.firebase) {
+          setSyncStatus('connecting');
+        }
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+
+    try {
+      setSyncStatus('connecting');
+      
+      // Initialize Firebase app (only once)
+      if (!window.firebase.apps || window.firebase.apps.length === 0) {
+        window.firebase.initializeApp(firebaseConfig);
+      }
+
+      const db = window.firebase.firestore();
+      
+      // Enable offline persistence
+      db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
+        if (err.code === 'failed-precondition') {
+          console.log('Offline persistence already enabled in another tab');
+        } else if (err.code === 'unimplemented') {
+          console.log('Browser does not support offline persistence');
+        }
+      });
+
+      // Sign in anonymously (no user sign-in required)
+      window.firebase.auth().signInAnonymously().then(() => {
+        console.log('🔐 Signed in anonymously to Firebase');
+        const safeRoom = sanitizeRoomCode(roomCode);
+        const bhajanCollection = db.collection('rooms').doc(safeRoom).collection('bhajans');
+        firestoreRef.current = bhajanCollection;
+
+        // Set up real-time listener
+        const unsubscribe = bhajanCollection.onSnapshot(
+          (snapshot) => {
+            const cloudBhajans = [];
+            snapshot.forEach((doc) => {
+              const data = doc.data();
+              cloudBhajans.push({ ...data, cloudId: doc.id });
+            });
+
+            if (cloudBhajans.length > 0) {
+              console.log(`🔄 Synced ${cloudBhajans.length} bhajans from cloud`);
+              
+              // Merge cloud bhajans with local ones (cloud wins for conflicts)
+              setBhajans((localBhajans) => {
+                const merged = [...cloudBhajans];
+                // Add local-only bhajans that aren't in cloud yet
+                localBhajans.forEach((local) => {
+                  if (!local.cloudId) {
+                    merged.push(local);
+                  }
+                });
+                return merged;
+              });
+              setLastSyncTime(new Date());
+            }
+            setSyncStatus('connected');
+          },
+          (error) => {
+            console.error('Firestore sync error:', error);
+            setSyncStatus('error');
+          }
+        );
+
+        unsubscribeRef.current = unsubscribe;
+      }).catch((error) => {
+        console.error('Firebase auth error:', error);
+        setSyncStatus('error');
+        alert('❌ Failed to connect to Firebase. Please check your configuration.\n\nError: ' + error.message);
+      });
+
+    } catch (error) {
+      console.error('Firebase initialization error:', error);
+      setSyncStatus('error');
+      alert('❌ Failed to initialize Firebase.\n\nError: ' + error.message + '\n\nPlease check your Firebase config.');
+    }
+
+    return () => {
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firebaseConfig, roomCode]);
+
+  // Save bhajan to Firestore
+  const syncBhajanToCloud = async (bhajan) => {
+    if (!firestoreRef.current) return null;
+    try {
+      setSyncStatus('syncing');
+      const cloudBhajan = { ...bhajan };
+      delete cloudBhajan.cloudId;
+      
+      if (bhajan.cloudId) {
+        // Update existing
+        await firestoreRef.current.doc(bhajan.cloudId).set(cloudBhajan);
+        setSyncStatus('connected');
+        setLastSyncTime(new Date());
+        return bhajan.cloudId;
+      } else {
+        // Create new
+        const docRef = await firestoreRef.current.add(cloudBhajan);
+        setSyncStatus('connected');
+        setLastSyncTime(new Date());
+        return docRef.id;
+      }
+    } catch (error) {
+      console.error('Failed to sync to cloud:', error);
+      setSyncStatus('error');
+      return null;
+    }
+  };
+
+  // Delete bhajan from Firestore
+  const deleteBhajanFromCloud = async (cloudId) => {
+    if (!firestoreRef.current || !cloudId) return;
+    try {
+      await firestoreRef.current.doc(cloudId).delete();
+      setLastSyncTime(new Date());
+    } catch (error) {
+      console.error('Failed to delete from cloud:', error);
+    }
+  };
+
+  // Setup sync - validates and saves config
+  const setupCloudSync = () => {
+    try {
+      // Parse config from user input
+      let config;
+      const text = tempFirebaseConfigText.trim();
+      
+      if (!text) {
+        alert('❌ Please paste your Firebase configuration');
+        return;
+      }
+      
+      // Try to extract config from pasted code snippet
+      try {
+        // Remove 'const firebaseConfig = ' prefix if present
+        let cleanText = text.replace(/^\s*(const|var|let)\s+\w+\s*=\s*/, '').replace(/;?\s*$/, '');
+        // Try direct JSON parse
+        config = JSON.parse(cleanText);
+      } catch {
+        try {
+          // Try eval-style parsing for JS object syntax
+          // eslint-disable-next-line no-new-func
+          config = (new Function('return ' + text.replace(/^\s*(const|var|let)\s+\w+\s*=\s*/, '').replace(/;?\s*$/, '')))();
+        } catch (e) {
+          alert('❌ Could not parse Firebase config.\n\nMake sure you pasted the complete firebaseConfig object including { and }.');
+          return;
+        }
+      }
+      
+      // Validate required fields
+      if (!config.apiKey || !config.projectId) {
+        alert('❌ Invalid Firebase config.\n\nIt must include at least:\n• apiKey\n• projectId\n\nCopy the complete config from your Firebase Console.');
+        return;
+      }
+      
+      if (!tempRoomCode.trim()) {
+        alert('❌ Please enter a Room Passcode.\n\nThis is a password that you and your friends use to share bhajans.');
+        return;
+      }
+      
+      // Save to localStorage
+      localStorage.setItem('babosa-firebase-config', JSON.stringify(config));
+      localStorage.setItem('babosa-room-code', tempRoomCode.trim());
+      
+      setFirebaseConfig(config);
+      setRoomCode(tempRoomCode.trim());
+      setShowSyncSetup(false);
+      setTempFirebaseConfigText('');
+      setTempRoomCode('');
+      
+      alert('✅ Cloud sync configured!\n\n🔄 Connecting to Firebase...\n\nYour bhajans will sync automatically across all devices using the same room passcode.');
+    } catch (error) {
+      console.error('Setup error:', error);
+      alert('❌ Error: ' + error.message);
+    }
+  };
+
+  // Disconnect cloud sync
+  const disconnectCloudSync = () => {
+    if (!window.confirm('Disconnect from cloud sync?\n\nYour bhajans will remain on this device but will no longer sync.\n\nYou can reconnect anytime.')) {
+      return;
+    }
+    
+    if (unsubscribeRef.current) {
+      unsubscribeRef.current();
+      unsubscribeRef.current = null;
+    }
+    
+    localStorage.removeItem('babosa-firebase-config');
+    localStorage.removeItem('babosa-room-code');
+    setFirebaseConfig(null);
+    setRoomCode('');
+    setSyncStatus('not-setup');
+    firestoreRef.current = null;
+    
+    alert('✅ Disconnected from cloud sync. Your bhajans are still saved locally.');
+  };
+
+  // Upload all local bhajans to cloud (useful after first setup)
+  const uploadAllLocalToCloud = async () => {
+    if (!firestoreRef.current) {
+      alert('❌ Not connected to cloud. Please set up sync first.');
+      return;
+    }
+    
+    const unsyncedBhajans = bhajans.filter(b => !b.cloudId);
+    if (unsyncedBhajans.length === 0) {
+      alert('✅ All your bhajans are already synced to the cloud.');
+      return;
+    }
+    
+    if (!window.confirm(`Upload ${unsyncedBhajans.length} local bhajans to cloud?\n\nAll devices with the same room code will receive them.`)) {
+      return;
+    }
+    
+    setSyncStatus('syncing');
+    let uploaded = 0;
+    let failed = 0;
+    
+    for (const bhajan of unsyncedBhajans) {
+      const cloudId = await syncBhajanToCloud(bhajan);
+      if (cloudId) {
+        uploaded++;
+        // Update local bhajan with cloudId
+        setBhajans(prev => prev.map(b => b.id === bhajan.id ? { ...b, cloudId } : b));
+      } else {
+        failed++;
+      }
+    }
+    
+    setSyncStatus('connected');
+    alert(`✅ Upload complete!\n\n📤 Uploaded: ${uploaded}\n❌ Failed: ${failed}`);
+  };
 
   // Browser history integration - enables swipe-back gesture and back button
   useEffect(() => {
@@ -1068,14 +1367,25 @@ function App() {
       .slice(0, 6);
   };
 
-  // Status display - shows saved count and online/offline status
+  // Status display - shows saved count, online status, and cloud sync status
   const SyncStatusDisplay = () => {
+    const getCloudStatus = () => {
+      if (syncStatus === 'not-setup') return { icon: '📱', text: 'Local only', color: 'bg-gray-100 text-gray-600' };
+      if (syncStatus === 'connecting') return { icon: '🔄', text: 'Connecting...', color: 'bg-blue-100 text-blue-700 animate-pulse' };
+      if (syncStatus === 'connected') return { icon: '☁️', text: `Synced (${roomCode})`, color: 'bg-green-100 text-green-700' };
+      if (syncStatus === 'syncing') return { icon: '⬆️', text: 'Syncing...', color: 'bg-blue-100 text-blue-700 animate-pulse' };
+      if (syncStatus === 'error') return { icon: '⚠️', text: 'Sync error', color: 'bg-red-100 text-red-700' };
+      return { icon: '📱', text: 'Local only', color: 'bg-gray-100 text-gray-600' };
+    };
+    
+    const cloudStatus = getCloudStatus();
+    
     return (
-      <div className="flex items-center text-xs gap-2">
+      <div className="flex items-center text-xs gap-2 flex-wrap">
         <div className="flex items-center">
           <span className="mr-1">💾</span>
           <span className="text-green-600">
-            {bhajans.length} bhajans saved
+            {bhajans.length} bhajans
           </span>
         </div>
         <div className={`flex items-center px-2 py-0.5 rounded-full ${
@@ -1085,8 +1395,12 @@ function App() {
         }`}>
           <span className="mr-1">{isOnline ? '🌐' : '📴'}</span>
           <span className="font-medium">
-            {isOnline ? 'Online' : 'Offline mode'}
+            {isOnline ? 'Online' : 'Offline'}
           </span>
+        </div>
+        <div className={`flex items-center px-2 py-0.5 rounded-full ${cloudStatus.color}`}>
+          <span className="mr-1">{cloudStatus.icon}</span>
+          <span className="font-medium">{cloudStatus.text}</span>
         </div>
       </div>
     );
@@ -1264,6 +1578,58 @@ function App() {
                 <span className="font-semibold">Upload Bhajan</span>
               </button>
 
+              {/* Cloud Sync Section */}
+              <div className="pt-4 border-t border-orange-200">
+                <h4 className="text-sm font-semibold text-amber-700 mb-3 px-4">☁️ Cloud Sync</h4>
+                
+                {syncStatus === 'not-setup' ? (
+                  <button
+                    onClick={() => {
+                      setShowSyncSetup(true);
+                      setShowMenu(false);
+                    }}
+                    className="w-full flex items-center p-3 rounded-lg bg-gradient-to-r from-blue-500 to-purple-500 text-white hover:shadow-lg transition-all"
+                  >
+                    <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+                    </svg>
+                    <span className="text-sm font-semibold">Setup Cloud Sync</span>
+                  </button>
+                ) : (
+                  <>
+                    <div className="p-3 rounded-lg bg-green-50 border border-green-200 mb-2">
+                      <p className="text-xs text-green-800 font-semibold">✅ Connected</p>
+                      <p className="text-xs text-green-700 mt-1">Room: <strong>{roomCode}</strong></p>
+                      {lastSyncTime && (
+                        <p className="text-xs text-green-600 mt-1">
+                          Last sync: {lastSyncTime.toLocaleTimeString()}
+                        </p>
+                      )}
+                    </div>
+                    
+                    <button
+                      onClick={uploadAllLocalToCloud}
+                      className="w-full flex items-center p-3 rounded-lg hover:bg-orange-100 text-amber-800 transition-colors"
+                    >
+                      <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                      </svg>
+                      <span className="text-sm font-medium">Upload All Local to Cloud</span>
+                    </button>
+                    
+                    <button
+                      onClick={disconnectCloudSync}
+                      className="w-full flex items-center p-3 rounded-lg hover:bg-red-100 text-red-600 transition-colors"
+                    >
+                      <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                      </svg>
+                      <span className="text-sm font-medium">Disconnect Sync</span>
+                    </button>
+                  </>
+                )}
+              </div>
+
               {/* Data Management Section */}
               <div className="pt-4 border-t border-orange-200">
                 <h4 className="text-sm font-semibold text-amber-700 mb-3 px-4">📁 Data Management</h4>
@@ -1301,6 +1667,130 @@ function App() {
                   <span className="text-sm font-medium">Clear All Data</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cloud Sync Setup Modal */}
+      {showSyncSetup && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-lg w-full my-4 max-h-[95vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg sm:text-xl font-bold text-amber-900">☁️ Setup Cloud Sync</h3>
+              <button
+                onClick={() => {
+                  setShowSyncSetup(false);
+                  setTempFirebaseConfigText('');
+                  setTempRoomCode('');
+                }}
+                className="p-2 hover:bg-gray-100 rounded-lg"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="space-y-4 text-sm">
+              {/* Info box */}
+              <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
+                <p className="text-blue-800 font-semibold mb-1">🔄 What is Cloud Sync?</p>
+                <p className="text-blue-700 text-xs">
+                  Sync your bhajans across all your devices automatically. Add a bhajan on your phone, see it on desktop instantly. Share with friends using the same Room Passcode!
+                </p>
+              </div>
+
+              {/* Quick setup steps */}
+              <div className="bg-amber-50 p-3 rounded-lg border border-amber-200">
+                <p className="font-semibold text-amber-800 mb-2">📋 Setup Steps (one-time, 5 min):</p>
+                <ol className="text-xs text-amber-700 space-y-1 list-decimal list-inside">
+                  <li>Go to <a href="https://console.firebase.google.com" target="_blank" rel="noopener noreferrer" className="underline text-blue-600">console.firebase.google.com</a></li>
+                  <li>Create a new project (name it anything like "Bhajans")</li>
+                  <li>In the project, go to <strong>Build → Firestore Database</strong> → Create database (start in test mode)</li>
+                  <li>Go to <strong>Build → Authentication</strong> → Get started → Enable <strong>Anonymous</strong> sign-in</li>
+                  <li>Click gear ⚙️ → <strong>Project Settings</strong> → scroll to "Your apps" → Click Web icon <strong>&lt;/&gt;</strong></li>
+                  <li>Register app → Copy the <code className="bg-white px-1 rounded">firebaseConfig</code> object</li>
+                  <li>Paste it in the box below ⬇️</li>
+                </ol>
+              </div>
+
+              {/* Firebase Config Input */}
+              <div>
+                <label className="block text-sm font-semibold text-amber-800 mb-2">
+                  1️⃣ Firebase Config (paste the whole object)
+                </label>
+                <textarea
+                  value={tempFirebaseConfigText}
+                  onChange={(e) => setTempFirebaseConfigText(e.target.value)}
+                  rows={8}
+                  className="w-full px-3 py-2 border-2 border-orange-200 rounded-lg focus:ring-2 focus:ring-orange-300 focus:border-orange-400 font-mono text-xs"
+                  placeholder={`{
+  "apiKey": "AIzaSyX...",
+  "authDomain": "your-app.firebaseapp.com",
+  "projectId": "your-app",
+  "storageBucket": "your-app.appspot.com",
+  "messagingSenderId": "123456789",
+  "appId": "1:..."
+}`}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  💡 Paste it as-is from Firebase Console (with or without "const firebaseConfig = ")
+                </p>
+              </div>
+
+              {/* Room Code Input */}
+              <div>
+                <label className="block text-sm font-semibold text-amber-800 mb-2">
+                  2️⃣ Room Passcode
+                </label>
+                <input
+                  type="text"
+                  value={tempRoomCode}
+                  onChange={(e) => setTempRoomCode(e.target.value)}
+                  className="w-full px-3 py-2 border-2 border-orange-200 rounded-lg focus:ring-2 focus:ring-orange-300 focus:border-orange-400"
+                  placeholder="e.g., babosa2026, myroom, family"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  🔐 Anyone with this passcode + Firebase config can sync with you. Keep it private or share with trusted people only.
+                </p>
+              </div>
+
+              {/* Firestore Rules Warning */}
+              <div className="bg-amber-50 p-3 rounded-lg border border-amber-200">
+                <p className="font-semibold text-amber-800 mb-1 text-xs">⚠️ Important Firestore Rules</p>
+                <p className="text-xs text-amber-700 mb-2">
+                  In Firebase Console → Firestore → Rules, paste:
+                </p>
+                <pre className="bg-white p-2 rounded text-xs overflow-x-auto border border-amber-300">{`rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}`}</pre>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-2 mt-5">
+              <button
+                onClick={setupCloudSync}
+                className="flex-1 bg-gradient-to-r from-green-500 to-emerald-500 text-white px-4 py-2.5 rounded-lg font-semibold hover:shadow-lg transition-all text-sm"
+              >
+                ✅ Connect to Cloud
+              </button>
+              <button
+                onClick={() => {
+                  setShowSyncSetup(false);
+                  setTempFirebaseConfigText('');
+                  setTempRoomCode('');
+                }}
+                className="px-4 py-2.5 bg-gray-200 text-gray-700 rounded-lg font-semibold hover:bg-gray-300 transition-colors text-sm"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>
