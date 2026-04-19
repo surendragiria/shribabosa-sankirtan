@@ -1,134 +1,117 @@
+/* eslint-disable */
 // बाबोसा संकीर्तन - Service Worker for Offline Support
-// Version 1.0.0
+// IMPORTANT: This file MUST be placed in the `public/` folder, NOT in `src/`
 
-const CACHE_NAME = 'babosa-sankirtan-v1';
-const RUNTIME_CACHE = 'babosa-sankirtan-runtime-v1';
+var CACHE_NAME = 'babosa-sankirtan-v1';
+var RUNTIME_CACHE = 'babosa-sankirtan-runtime-v1';
 
-// Files to cache immediately when SW installs
-const PRECACHE_URLS = [
+var PRECACHE_URLS = [
   '/',
   '/index.html',
-  '/manifest.json',
-  '/favicon.ico'
+  '/manifest.json'
 ];
 
-// Install event - cache the essentials
-self.addEventListener('install', (event) => {
-  console.log('[Service Worker] Installing...');
+// Install - pre-cache essentials
+self.addEventListener('install', function(event) {
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('[Service Worker] Pre-caching app shell');
-        return cache.addAll(PRECACHE_URLS).catch((error) => {
-          console.warn('[Service Worker] Precache failed for some items:', error);
-          // Continue even if some precaching fails
-        });
-      })
-      .then(() => self.skipWaiting())
+    caches.open(CACHE_NAME).then(function(cache) {
+      return cache.addAll(PRECACHE_URLS).catch(function(err) {
+        console.warn('Precache failed for some items:', err);
+      });
+    }).then(function() {
+      return self.skipWaiting();
+    })
   );
 });
 
-// Activate event - clean up old caches
-self.addEventListener('activate', (event) => {
-  console.log('[Service Worker] Activating...');
-  const currentCaches = [CACHE_NAME, RUNTIME_CACHE];
+// Activate - clean old caches
+self.addEventListener('activate', function(event) {
+  var currentCaches = [CACHE_NAME, RUNTIME_CACHE];
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
+    caches.keys().then(function(cacheNames) {
       return Promise.all(
-        cacheNames
-          .filter((cacheName) => !currentCaches.includes(cacheName))
-          .map((cacheName) => {
-            console.log('[Service Worker] Deleting old cache:', cacheName);
-            return caches.delete(cacheName);
-          })
+        cacheNames.filter(function(name) {
+          return currentCaches.indexOf(name) === -1;
+        }).map(function(name) {
+          return caches.delete(name);
+        })
       );
-    }).then(() => self.clients.claim())
+    }).then(function() {
+      return self.clients.claim();
+    })
   );
 });
 
-// Fetch event - serve from cache, fall back to network
-self.addEventListener('fetch', (event) => {
-  const { request } = event;
-  const url = new URL(request.url);
+// Fetch - serve from cache, fall back to network
+self.addEventListener('fetch', function(event) {
+  var request = event.request;
 
   // Skip non-GET requests
-  if (request.method !== 'GET') return;
-
-  // Skip cross-origin requests (except for known CDNs)
-  if (url.origin !== self.location.origin && 
-      !url.hostname.includes('cdn.jsdelivr.net') &&
-      !url.hostname.includes('cdnjs.cloudflare.com')) {
+  if (request.method !== 'GET') {
     return;
   }
 
-  // Network-first for HTML (so users always get latest app version when online)
-  if (request.mode === 'navigate' || 
-      (request.headers.get('accept') && request.headers.get('accept').includes('text/html'))) {
+  var url = new URL(request.url);
+  
+  // Skip cross-origin requests except known CDNs
+  if (url.origin !== self.location.origin) {
+    if (url.hostname.indexOf('cdn.jsdelivr.net') === -1 && 
+        url.hostname.indexOf('cdnjs.cloudflare.com') === -1) {
+      return;
+    }
+  }
+
+  // Network-first for HTML navigations
+  if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request)
-        .then((response) => {
-          // Cache the fresh copy
-          const responseClone = response.clone();
-          caches.open(RUNTIME_CACHE).then((cache) => {
-            cache.put(request, responseClone);
-          });
-          return response;
-        })
-        .catch(() => {
-          // Network failed - serve from cache
-          console.log('[Service Worker] Network failed, serving from cache:', request.url);
-          return caches.match(request)
-            .then((cachedResponse) => {
-              return cachedResponse || caches.match('/index.html') || caches.match('/');
-            });
-        })
+      fetch(request).then(function(response) {
+        var clone = response.clone();
+        caches.open(RUNTIME_CACHE).then(function(cache) {
+          cache.put(request, clone);
+        });
+        return response;
+      }).catch(function() {
+        return caches.match(request).then(function(cached) {
+          return cached || caches.match('/index.html') || caches.match('/');
+        });
+      })
     );
     return;
   }
 
-  // Cache-first for static assets (JS, CSS, images, fonts)
+  // Cache-first for everything else (JS, CSS, images, fonts)
   event.respondWith(
-    caches.match(request)
-      .then((cachedResponse) => {
-        if (cachedResponse) {
-          // Return cached version immediately
-          // Also update cache in background (stale-while-revalidate pattern)
-          fetch(request).then((networkResponse) => {
-            if (networkResponse && networkResponse.status === 200) {
-              caches.open(RUNTIME_CACHE).then((cache) => {
-                cache.put(request, networkResponse);
-              });
-            }
-          }).catch(() => {
-            // Background update failed, but we already have cached version
-          });
-          return cachedResponse;
-        }
-
-        // Not in cache - fetch from network and cache it
-        return fetch(request).then((response) => {
-          // Don't cache errors or non-200 responses
-          if (!response || response.status !== 200 || response.type === 'error') {
-            return response;
+    caches.match(request).then(function(cached) {
+      if (cached) {
+        // Update cache in background
+        fetch(request).then(function(networkResponse) {
+          if (networkResponse && networkResponse.status === 200) {
+            caches.open(RUNTIME_CACHE).then(function(cache) {
+              cache.put(request, networkResponse);
+            });
           }
-
-          const responseClone = response.clone();
-          caches.open(RUNTIME_CACHE).then((cache) => {
-            cache.put(request, responseClone);
-          });
-
-          return response;
-        }).catch((error) => {
-          console.log('[Service Worker] Fetch failed:', request.url, error);
-          // For image requests, could return a placeholder here if desired
-          throw error;
+        }).catch(function() {
+          // Background update failed, but we already have cached version
         });
-      })
+        return cached;
+      }
+
+      return fetch(request).then(function(response) {
+        if (!response || response.status !== 200 || response.type === 'error') {
+          return response;
+        }
+        var clone = response.clone();
+        caches.open(RUNTIME_CACHE).then(function(cache) {
+          cache.put(request, clone);
+        });
+        return response;
+      });
+    })
   );
 });
 
-// Listen for skip-waiting message from the app
-self.addEventListener('message', (event) => {
+// Allow the app to tell SW to skip waiting
+self.addEventListener('message', function(event) {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
