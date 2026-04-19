@@ -1,10 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 
 function App() {
-  // Sync state
-  const [syncInstructions, setSyncInstructions] = useState(false);
-  const fileInputRef = useRef(null);
-
   // Load bhajans from localStorage or use defaults
   const getInitialBhajans = () => {
     try {
@@ -149,118 +145,6 @@ function App() {
       }
     }
   }, [bhajans]);
-
-  // Check for Google Drive sync files
-  const checkForDriveUpdates = () => {
-    // Trigger file input to check for Drive sync file
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
-    }
-  };
-
-  // Handle Drive sync file upload
-  const handleDriveSyncFile = (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const driveData = JSON.parse(e.target.result);
-        
-        // Validate sync file format
-        if (driveData.bhajans && Array.isArray(driveData.bhajans)) {
-          const driveBhajans = driveData.bhajans;
-          const localBhajans = bhajans;
-          
-          // Smart merge: combine both datasets
-          const mergedData = mergeBhajanData(localBhajans, driveBhajans);
-          
-          if (mergedData.length > bhajans.length) {
-            setBhajans(mergedData);
-            alert(`✅ Sync successful! Added ${mergedData.length - bhajans.length} new bhajans from Google Drive.`);
-          } else if (mergedData.length === bhajans.length) {
-            alert('✅ Sync complete! Your data is already up to date.');
-          } else {
-            setBhajans(mergedData);
-            alert('✅ Sync successful! Data synchronized with Google Drive.');
-          }
-        } else {
-          alert('❌ Invalid sync file format. Please select a valid babosa-sankirtan-sync file.');
-        }
-      } catch (error) {
-        console.error('Drive sync error:', error);
-        alert('❌ Failed to sync with Google Drive. Please check the file and try again.');
-      }
-    };
-    reader.readAsText(file);
-    event.target.value = '';
-  };
-
-  // Smart merge function
-  const mergeBhajanData = (localData, driveData) => {
-    const mergedMap = new Map();
-    
-    // Add all local bhajans
-    localData.forEach(bhajan => {
-      mergedMap.set(bhajan.id, bhajan);
-    });
-    
-    // Add/update with drive bhajans (prioritize newer lastViewed)
-    driveData.forEach(driveBhajan => {
-      const localBhajan = mergedMap.get(driveBhajan.id);
-      
-      if (!localBhajan) {
-        // New bhajan from drive
-        mergedMap.set(driveBhajan.id, driveBhajan);
-      } else {
-        // Merge existing: use most recent lastViewed
-        const localTime = new Date(localBhajan.lastViewed || 0);
-        const driveTime = new Date(driveBhajan.lastViewed || 0);
-        
-        if (driveTime > localTime) {
-          mergedMap.set(driveBhajan.id, {
-            ...localBhajan,
-            ...driveBhajan,
-            viewCount: Math.max(localBhajan.viewCount || 0, driveBhajan.viewCount || 0)
-          });
-        }
-      }
-    });
-    
-    return Array.from(mergedMap.values()).sort((a, b) => a.id - b.id);
-  };
-
-  // Manual export for Google Drive
-  const exportForDrive = () => {
-    try {
-      const timestamp = new Date().toISOString();
-      const filename = `babosa-sankirtan-sync-${timestamp.split('T')[0]}.json`;
-      
-      const syncData = {
-        timestamp,
-        device: navigator.userAgent.includes('Mobile') ? 'mobile' : 'desktop',
-        bhajans: bhajans,
-        version: '2.0.0',
-        instructions: 'Upload this file to your Google Drive, then download on other devices to sync'
-      };
-      
-      const dataStr = JSON.stringify(syncData, null, 2);
-      const dataBlob = new Blob([dataStr], { type: 'application/json' });
-      const url = URL.createObjectURL(dataBlob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      link.click();
-      URL.revokeObjectURL(url);
-      
-      setSyncInstructions(true);
-      alert(`📁 Sync file created! Upload "${filename}" to Google Drive for cross-device sync.`);
-    } catch (error) {
-      console.error('Export error:', error);
-      alert('Failed to create sync file. Please try again.');
-    }
-  };
 
   // Regular export bhajans
   const exportBhajans = () => {
@@ -615,6 +499,7 @@ function App() {
     setSelectedBhajan(null);
     setShowUpload(true);
     setActiveView('add');
+    window.history.pushState({ view: 'edit', id: bhajan.id }, '', window.location.pathname);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -637,15 +522,49 @@ function App() {
     ));
   };
 
-  // Open bhajan with scroll-to-top
+  // Open bhajan with scroll-to-top AND push browser history state
   const openBhajan = (bhajan) => {
     setSelectedBhajan(bhajan);
     trackView(bhajan.id);
+    // Push to browser history so back button/swipe gesture works
+    window.history.pushState({ view: 'bhajan', id: bhajan.id }, '', window.location.pathname);
     // Scroll to top so title and lyrics are visible from the start
     setTimeout(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }, 50);
   };
+
+  // Browser history integration - enables swipe-back gesture and back button
+  useEffect(() => {
+    // Set initial history state on first load
+    if (!window.history.state) {
+      window.history.replaceState({ view: 'home' }, '', window.location.pathname);
+    }
+
+    // Handle browser back button / swipe-back gesture / hardware back button
+    const handlePopState = (event) => {
+      console.log('Back navigation detected', event.state);
+      
+      // Close all sub-views - returns to main collection
+      setSelectedBhajan(null);
+      setShowUpload(false);
+      setExtractedText('');
+      setEditingBhajan(null);
+      setShowMenu(false);
+      setEditingScale(false);
+      
+      // Stop camera if running
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+        setCameraStream(null);
+      }
+      setShowCamera(false);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Voice search functionality - improved with better language support
   useEffect(() => {
@@ -883,7 +802,8 @@ function App() {
         <div className="absolute bottom-32 right-32 text-6xl">🌺</div>
       </div>
 
-      {/* Header - Mobile Responsive */}
+      {/* Header - Hidden when viewing individual bhajan for focused reading */}
+      {!selectedBhajan && (
       <div className="relative z-10 bg-white/80 backdrop-blur-md shadow-lg border-b border-orange-200">
         <div className="max-w-6xl mx-auto px-3 sm:px-4 py-3 sm:py-4">
           {/* Top Row: Menu + Title + Action Icons */}
@@ -904,17 +824,6 @@ function App() {
             </div>
             
             <div className="flex items-center space-x-1 sm:space-x-2 flex-shrink-0">
-              {/* Check Drive Updates Button */}
-              <button
-                onClick={checkForDriveUpdates}
-                className="p-2 hover:bg-orange-100 text-orange-600 rounded-lg transition-colors"
-                title="Check Google Drive for updates"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-              </button>
-
               {/* Voice search button */}
               {voiceSearchSupported && (
                 <button
@@ -991,15 +900,7 @@ function App() {
           </div>
         </div>
       </div>
-
-      {/* Hidden file input for Drive sync */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".json"
-        onChange={handleDriveSyncFile}
-        className="hidden"
-      />
+      )}
 
       {/* Sidebar Menu */}
       {showMenu && (
@@ -1050,6 +951,7 @@ function App() {
                   setShowUpload(true);
                   setEditingBhajan(null);
                   setShowMenu(false);
+                  window.history.pushState({ view: 'upload' }, '', window.location.pathname);
                 }}
                 className={`w-full flex items-center p-4 rounded-xl transition-all duration-300 ${
                   activeView === 'add' ? 'bg-orange-500 text-white shadow-lg' : 'hover:bg-orange-100 text-amber-800'
@@ -1060,43 +962,6 @@ function App() {
                 </svg>
                 <span className="font-semibold">Upload Bhajan</span>
               </button>
-
-              {/* Google Drive Sync Section */}
-              <div className="pt-4 border-t border-orange-200">
-                <h4 className="text-sm font-semibold text-amber-700 mb-3 px-4">☁️ Google Drive Sync</h4>
-                
-                <button
-                  onClick={exportForDrive}
-                  className="w-full flex items-center p-3 rounded-lg hover:bg-orange-100 text-amber-800 transition-colors"
-                >
-                  <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
-                  </svg>
-                  <span className="text-sm font-medium">Create Sync File</span>
-                </button>
-
-                <button
-                  onClick={checkForDriveUpdates}
-                  className="w-full flex items-center p-3 rounded-lg hover:bg-orange-100 text-amber-800 transition-colors"
-                >
-                  <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                  <span className="text-sm font-medium">Load from Drive</span>
-                </button>
-
-                <div className="p-3 rounded-lg bg-blue-50 border border-blue-200">
-                  <p className="text-xs text-blue-700 mb-2">
-                    <strong>📱→☁️→📱 Cross-Device Sync:</strong>
-                  </p>
-                  <ol className="text-xs text-blue-600 space-y-1">
-                    <li>1. Click "Create Sync File"</li>
-                    <li>2. Upload file to Google Drive</li>
-                    <li>3. Download on other device</li>
-                    <li>4. Click "Load from Drive"</li>
-                  </ol>
-                </div>
-              </div>
 
               {/* Data Management Section */}
               <div className="pt-4 border-t border-orange-200">
@@ -1140,56 +1005,35 @@ function App() {
         </div>
       )}
 
-      {/* Sync Instructions Modal */}
-      {syncInstructions && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
-            <h3 className="text-lg font-bold text-amber-900 mb-4">☁️ Google Drive Sync Instructions</h3>
-            
-            <div className="space-y-4 text-sm text-gray-700">
-              <div className="bg-blue-50 p-3 rounded-lg">
-                <p className="font-semibold text-blue-800 mb-2">📱 To sync to other devices:</p>
-                <ol className="space-y-1 text-blue-700">
-                  <li>1. Upload the downloaded file to Google Drive</li>
-                  <li>2. On other device, download the file</li>
-                  <li>3. Open the app and click "Load from Drive"</li>
-                  <li>4. Select the downloaded sync file</li>
-                </ol>
-              </div>
-              
-              <div className="bg-green-50 p-3 rounded-lg">
-                <p className="font-semibold text-green-800 mb-1">💡 Pro Tip:</p>
-                <p className="text-green-700">Enable "Auto-export" to automatically backup your bhajans to Downloads folder.</p>
-              </div>
-            </div>
-
-            <button
-              onClick={() => setSyncInstructions(false)}
-              className="w-full bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-semibold transition-colors mt-4"
-            >
-              Got it!
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Main Content */}
       <div className="relative z-10 max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-8">
         
         {selectedBhajan ? (
           /* Individual Bhajan View with Scale Editing */
           <div>
-            <div className="mb-4 sm:mb-6 flex items-center justify-between gap-2">
-              <button
-                onClick={() => setSelectedBhajan(null)}
-                className="flex items-center text-orange-600 hover:text-orange-800 transition-colors py-2 px-1 text-sm sm:text-base"
-              >
-                <svg className="w-5 h-5 mr-1 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-                </svg>
-                <span className="hidden sm:inline">Back to Collection</span>
-                <span className="sm:hidden">Back</span>
-              </button>
+            <div className="mb-4 sm:mb-6 flex items-center justify-between gap-2 bg-white/80 backdrop-blur-md rounded-xl shadow-md p-2 sm:p-3 sticky top-0 z-20">
+              <div className="flex items-center gap-1 sm:gap-2">
+                <button
+                  onClick={() => setShowMenu(true)}
+                  className="p-2 hover:bg-orange-100 text-orange-600 rounded-lg transition-colors"
+                  title="Menu"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                </button>
+                
+                <button
+                  onClick={() => window.history.back()}
+                  className="flex items-center text-orange-600 hover:text-orange-800 transition-colors py-2 px-2 text-sm sm:text-base"
+                >
+                  <svg className="w-5 h-5 mr-1 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                  </svg>
+                  <span className="hidden sm:inline">Back to Collection</span>
+                  <span className="sm:hidden">Back</span>
+                </button>
+              </div>
               
               <button
                 onClick={navigateToHome}
