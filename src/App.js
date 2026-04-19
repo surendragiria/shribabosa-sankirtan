@@ -842,26 +842,65 @@ function App() {
 
   // Open bhajan with scroll-to-top AND push browser history state
   const openBhajan = (bhajan) => {
-    // Scroll instantly BEFORE state change so the new page renders at top
-    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    console.log('🎵 Opening bhajan:', bhajan.title, 'ID:', bhajan.id);
+    
+    // Force scroll to absolute top BEFORE state change
+    try {
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    } catch (e) { /* ignore */ }
     
     setSelectedBhajan(bhajan);
     trackView(bhajan.id);
+    
     // Push to browser history so back button/swipe gesture works
     window.history.pushState({ view: 'bhajan', id: bhajan.id }, '', window.location.pathname);
   };
 
-  // Whenever selectedBhajan changes, reset scroll to top
-  // This ensures we always see the title/lyrics first
+  // Robust scroll-to-top when selectedBhajan changes
+  // Uses multiple methods and timings to handle all mobile browsers
   useEffect(() => {
-    if (selectedBhajan) {
-      // Multiple attempts to ensure scroll happens even on mobile browsers
-      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-      // Backup attempt after render
-      requestAnimationFrame(() => {
-        window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-      });
-    }
+    if (!selectedBhajan) return;
+    
+    console.log('📖 Bhajan detail page rendered for:', selectedBhajan.title);
+    
+    const scrollToTop = () => {
+      try {
+        window.scrollTo(0, 0);
+        document.documentElement.scrollTop = 0;
+        document.body.scrollTop = 0;
+        
+        // Also try scrolling the anchor into view
+        const anchor = document.getElementById('bhajan-top-anchor');
+        if (anchor && anchor.scrollIntoView) {
+          anchor.scrollIntoView({ block: 'start' });
+        }
+      } catch (e) {
+        console.error('Scroll error:', e);
+      }
+    };
+    
+    // Attempt 1: Immediately
+    scrollToTop();
+    
+    // Attempt 2: After next animation frame (DOM painted)
+    const raf1 = requestAnimationFrame(() => {
+      scrollToTop();
+      
+      // Attempt 3: After another frame (to catch any reflows)
+      const raf2 = requestAnimationFrame(scrollToTop);
+      
+      // Attempt 4: Small timeout as final safety net
+      const timeout = setTimeout(scrollToTop, 100);
+      
+      return () => {
+        cancelAnimationFrame(raf2);
+        clearTimeout(timeout);
+      };
+    });
+    
+    return () => cancelAnimationFrame(raf1);
   }, [selectedBhajan]);
 
   // Online/offline status listener for PWA
@@ -1911,6 +1950,9 @@ service cloud.firestore {
         {selectedBhajan ? (
           /* Individual Bhajan View with Scale Editing */
           <div>
+            {/* Scroll anchor - useEffect scrolls this into view when bhajan opens */}
+            <div id="bhajan-top-anchor" style={{ position: 'absolute', top: 0, height: 1, width: 1 }} />
+            
             <div className="mb-4 sm:mb-6 flex items-center justify-between gap-2 bg-white/80 backdrop-blur-md rounded-xl shadow-md p-2 sm:p-3 sticky top-0 z-20">
               <div className="flex items-center gap-1 sm:gap-2">
                 <button
