@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 
 function App() {
   // Load bhajans from localStorage or use defaults
@@ -859,8 +859,8 @@ function App() {
   };
 
   // Robust scroll-to-top when selectedBhajan changes
-  // Uses multiple methods and timings to handle all mobile browsers
-  useEffect(() => {
+  // Uses useLayoutEffect to run SYNCHRONOUSLY before browser paint
+  useLayoutEffect(() => {
     if (!selectedBhajan) return;
     
     console.log('📖 Bhajan detail page rendered for:', selectedBhajan.title);
@@ -881,26 +881,24 @@ function App() {
       }
     };
     
-    // Attempt 1: Immediately
+    // Attempt 1: Immediately (sync, before paint)
     scrollToTop();
     
-    // Attempt 2: After next animation frame (DOM painted)
+    // Attempt 2: After next animation frame (after DOM painted)
     const raf1 = requestAnimationFrame(() => {
       scrollToTop();
       
       // Attempt 3: After another frame (to catch any reflows)
-      const raf2 = requestAnimationFrame(scrollToTop);
-      
-      // Attempt 4: Small timeout as final safety net
-      const timeout = setTimeout(scrollToTop, 100);
-      
-      return () => {
-        cancelAnimationFrame(raf2);
-        clearTimeout(timeout);
-      };
+      requestAnimationFrame(scrollToTop);
     });
     
-    return () => cancelAnimationFrame(raf1);
+    // Attempt 4: Small timeout as final safety net
+    const timeout = setTimeout(scrollToTop, 150);
+    
+    return () => {
+      cancelAnimationFrame(raf1);
+      clearTimeout(timeout);
+    };
   }, [selectedBhajan]);
 
   // Online/offline status listener for PWA
@@ -1948,12 +1946,12 @@ service cloud.firestore {
       <div className="relative z-10 max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-8">
         
         {selectedBhajan ? (
-          /* Individual Bhajan View with Scale Editing */
-          <div>
-            {/* Scroll anchor - useEffect scrolls this into view when bhajan opens */}
+          /* Individual Bhajan View with Scale Editing - key forces fresh mount on each bhajan */
+          <div key={`bhajan-${selectedBhajan.id}`} style={{ minHeight: '100vh' }}>
+            {/* Scroll anchor at very top */}
             <div id="bhajan-top-anchor" style={{ position: 'absolute', top: 0, height: 1, width: 1 }} />
             
-            <div className="mb-4 sm:mb-6 flex items-center justify-between gap-2 bg-white/80 backdrop-blur-md rounded-xl shadow-md p-2 sm:p-3 sticky top-0 z-20">
+            <div className="mb-4 sm:mb-6 flex items-center justify-between gap-2 bg-white/80 backdrop-blur-md rounded-xl shadow-md p-2 sm:p-3">
               <div className="flex items-center gap-1 sm:gap-2">
                 <button
                   onClick={() => setShowMenu(true)}
