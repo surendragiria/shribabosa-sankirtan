@@ -612,8 +612,10 @@ function App() {
 
   const editBhajan = (bhajan) => {
     setEditingBhajan(bhajan);
+    setSelectedBhajan(null);
     setShowUpload(true);
     setActiveView('add');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const navigateToHome = () => {
@@ -635,7 +637,17 @@ function App() {
     ));
   };
 
-  // Voice search functionality
+  // Open bhajan with scroll-to-top
+  const openBhajan = (bhajan) => {
+    setSelectedBhajan(bhajan);
+    trackView(bhajan.id);
+    // Scroll to top so title and lyrics are visible from the start
+    setTimeout(() => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 50);
+  };
+
+  // Voice search functionality - improved with better language support
   useEffect(() => {
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
       setVoiceSearchSupported(true);
@@ -644,16 +656,33 @@ function App() {
       
       recognition.continuous = false;
       recognition.interimResults = false;
-      recognition.lang = 'hi-IN';
+      // Support both English and Hindi - browsers will auto-detect
+      recognition.lang = 'en-IN';
+      recognition.maxAlternatives = 3;
       
       recognition.onresult = (event) => {
         const transcript = event.results[0][0].transcript;
+        console.log('Voice search result:', transcript);
         setSearchTerm(transcript);
         setVoiceSearchActive(false);
       };
       
-      recognition.onerror = () => {
+      recognition.onerror = (event) => {
+        console.error('Voice search error:', event.error);
         setVoiceSearchActive(false);
+        
+        // Show user-friendly error messages
+        if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+          alert('🎤 Microphone permission denied. Please allow microphone access in your browser settings and try again.');
+        } else if (event.error === 'no-speech') {
+          alert('🎤 No speech detected. Please speak clearly and try again.');
+        } else if (event.error === 'network') {
+          alert('🎤 Network error. Voice search requires an internet connection.');
+        } else if (event.error === 'audio-capture') {
+          alert('🎤 No microphone found. Please check your microphone and try again.');
+        } else {
+          alert(`🎤 Voice search failed: ${event.error}. Please try again.`);
+        }
       };
       
       recognition.onend = () => {
@@ -665,9 +694,27 @@ function App() {
   }, []);
 
   const startVoiceSearch = () => {
-    if (recognitionRef.current && voiceSearchSupported) {
+    if (!recognitionRef.current || !voiceSearchSupported) {
+      alert('🎤 Voice search is not supported in your browser. Please try using Chrome, Edge, or Safari.');
+      return;
+    }
+    
+    try {
       setVoiceSearchActive(true);
       recognitionRef.current.start();
+    } catch (error) {
+      console.error('Failed to start voice search:', error);
+      setVoiceSearchActive(false);
+      // Handle "already started" error
+      if (error.message && error.message.includes('already started')) {
+        recognitionRef.current.stop();
+        setTimeout(() => {
+          setVoiceSearchActive(true);
+          recognitionRef.current.start();
+        }, 100);
+      } else {
+        alert('🎤 Could not start voice search. Please try again.');
+      }
     }
   };
 
@@ -1132,15 +1179,27 @@ function App() {
         {selectedBhajan ? (
           /* Individual Bhajan View with Scale Editing */
           <div>
-            <div className="mb-4 sm:mb-6">
+            <div className="mb-4 sm:mb-6 flex items-center justify-between gap-2">
               <button
                 onClick={() => setSelectedBhajan(null)}
-                className="flex items-center text-orange-600 hover:text-orange-800 transition-colors mb-2 sm:mb-4 py-2 text-sm sm:text-base"
+                className="flex items-center text-orange-600 hover:text-orange-800 transition-colors py-2 px-1 text-sm sm:text-base"
               >
-                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-5 h-5 mr-1 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
                 </svg>
-                Back to Collection
+                <span className="hidden sm:inline">Back to Collection</span>
+                <span className="sm:hidden">Back</span>
+              </button>
+              
+              <button
+                onClick={navigateToHome}
+                className="flex items-center bg-orange-500 hover:bg-orange-600 text-white transition-colors py-2 px-3 sm:px-4 rounded-lg text-sm sm:text-base font-semibold shadow-md"
+                title="Go to Home"
+              >
+                <svg className="w-5 h-5 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                </svg>
+                <span className="hidden sm:inline">Home</span>
               </button>
             </div>
 
@@ -1339,11 +1398,7 @@ function App() {
                       {similar.map(({ bhajan, reasons }) => (
                         <div
                           key={bhajan.id}
-                          onClick={() => {
-                            setSelectedBhajan(bhajan);
-                            trackView(bhajan.id);
-                            window.scrollTo({ top: 0, behavior: 'smooth' });
-                          }}
+                          onClick={() => openBhajan(bhajan)}
                           className="bg-gradient-to-br from-orange-50 to-amber-50 hover:from-orange-100 hover:to-amber-100 rounded-xl p-3 sm:p-4 cursor-pointer transition-all duration-300 border border-orange-200 hover:border-orange-400 hover:shadow-md"
                         >
                           <h4 className="font-bold text-amber-900 mb-2 line-clamp-2 text-sm sm:text-base">
@@ -1787,10 +1842,7 @@ function App() {
                   <div
                     key={bhajan.id}
                     className="relative bg-white/90 backdrop-blur-sm rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer overflow-hidden group"
-                    onClick={() => {
-                      setSelectedBhajan(bhajan);
-                      trackView(bhajan.id);
-                    }}
+                    onClick={() => openBhajan(bhajan)}
                   >
                     <div className="p-4 sm:p-6">
                       <h3 className="text-lg sm:text-xl font-bold text-amber-900 mb-2 sm:mb-3 group-hover:text-orange-600 transition-colors line-clamp-2 pr-20">
