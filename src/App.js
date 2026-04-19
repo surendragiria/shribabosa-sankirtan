@@ -734,6 +734,7 @@ function App() {
   };
 
 
+  const startEditingScale = () => {
     setTempScale(selectedBhajan?.scale || '');
     setEditingScale(true);
   };
