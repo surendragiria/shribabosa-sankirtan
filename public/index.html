@@ -13,18 +13,19 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="application-name" content="बाबोसा संकीर्तन" />
     
-    <meta name="description" content="बाबोसा संकीर्तन - भजन से भगवान तक | Personal bhajan collection with offline access" />
+    <meta name="description" content="बाबोसा संकीर्तन - भजन से भगवान तक | Personal bhajan collection with cloud sync" />
     
-    <!-- Apple touch icon -->
     <link rel="apple-touch-icon" href="/logo192.png" />
-    
-    <!-- PWA manifest -->
     <link rel="manifest" href="/manifest.json" />
     
-    <!-- Tailwind CSS via CDN (required for styling) -->
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- Custom scrollbar and font styles -->
+    <!-- Firebase SDK (for cloud sync) -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
+    
     <style>
       body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans Devanagari', Roboto, Arial, sans-serif;
@@ -37,7 +38,6 @@
         -webkit-tap-highlight-color: transparent;
       }
       
-      /* Line clamp utilities (for truncating text) */
       .line-clamp-2 {
         display: -webkit-box;
         -webkit-line-clamp: 2;
@@ -58,29 +58,14 @@
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
     
-    <!-- Register Service Worker for offline support -->
+    <!-- Service Worker -->
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function() {
           navigator.serviceWorker.register('/service-worker.js')
             .then(function(registration) {
               console.log('✅ Service Worker registered. Scope:', registration.scope);
-              
-              // Check for updates every hour
-              setInterval(function() {
-                registration.update();
-              }, 60 * 60 * 1000);
-              
-              registration.addEventListener('updatefound', function() {
-                var newWorker = registration.installing;
-                if (newWorker) {
-                  newWorker.addEventListener('statechange', function() {
-                    if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                      console.log('🔄 New version available! Will activate on next reload.');
-                    }
-                  });
-                }
-              });
+              setInterval(function() { registration.update(); }, 60 * 60 * 1000);
             })
             .catch(function(error) {
               console.log('❌ Service Worker registration failed:', error);
@@ -88,14 +73,8 @@
         });
       }
       
-      // Detect online/offline status
-      window.addEventListener('online', function() {
-        console.log('🌐 Back online');
-      });
-      
-      window.addEventListener('offline', function() {
-        console.log('📴 Gone offline - app will continue to work');
-      });
+      window.addEventListener('online', function() { console.log('🌐 Back online'); });
+      window.addEventListener('offline', function() { console.log('📴 Gone offline'); });
     </script>
   </body>
 </html>
