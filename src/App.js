@@ -1405,17 +1405,96 @@ function App() {
     }
   };
 
-  // Filter bhajans based on search and filters
+  // Bilingual search helper - generates search variants for both English and Hindi
+  const getSearchVariants = (term) => {
+    if (!term) return [];
+    const lower = term.toLowerCase().trim();
+    const variants = new Set([lower]);
+    
+    // Split search into words and convert each
+    const words = lower.split(/\s+/).filter(Boolean);
+    
+    // For each word, add the Hindi transliteration if available
+    const hindiWords = words.map(w => hindiTransliterationMap[w] || w);
+    if (hindiWords.some((hw, i) => hw !== words[i])) {
+      variants.add(hindiWords.join(' '));
+    }
+    
+    // Build reverse map: Hindi -> English (so searching in Hindi finds English-stored bhajans)
+    const reverseMap = {};
+    for (const [eng, hin] of Object.entries(hindiTransliterationMap)) {
+      if (!reverseMap[hin]) reverseMap[hin] = [];
+      reverseMap[hin].push(eng);
+    }
+    
+    // For each word in search, if it's Hindi, add English alternatives
+    const englishVariants = [];
+    let hasReverse = false;
+    for (const w of words) {
+      if (reverseMap[w]) {
+        englishVariants.push(reverseMap[w][0]);
+        hasReverse = true;
+      } else {
+        englishVariants.push(w);
+      }
+    }
+    if (hasReverse) {
+      variants.add(englishVariants.join(' '));
+    }
+    
+    // Add individual word variants
+    words.forEach(w => {
+      if (hindiTransliterationMap[w]) {
+        variants.add(hindiTransliterationMap[w]);
+      }
+      if (reverseMap[w]) {
+        variants.add(reverseMap[w][0]);
+      }
+    });
+    
+    return Array.from(variants);
+  };
+
+  // Check if any search variant matches the bhajan field
+  const matchesAnyVariant = (fieldValue, variants) => {
+    if (!fieldValue) return false;
+    const lower = fieldValue.toLowerCase();
+    return variants.some(v => lower.includes(v));
+  };
+
+  // Build searchable index for each bhajan - includes ALL words from title, lyrics, etc.
+  // This allows dynamic search where any word in any bhajan becomes searchable
+  const buildBhajanSearchIndex = (bhajan) => {
+    const allText = [
+      bhajan.title || '',
+      bhajan.lyrics || '',
+      bhajan.deity || '',
+      bhajan.author || '',
+      bhajan.keywords || '',
+      bhajan.category || '',
+      bhajan.scale || '',
+      bhajan.mood || '',
+      bhajan.source || ''
+    ].join(' ').toLowerCase();
+    
+    return allText;
+  };
+
+  // Filter bhajans based on search and filters - now with bilingual search support
   const filteredBhajans = React.useMemo(() => {
+    if (!searchTerm && !filterCategory && !filterDeity && !filterMood) {
+      return bhajans;
+    }
+    
+    const searchVariants = getSearchVariants(searchTerm);
+    
     return bhajans.filter(bhajan => {
+      // Build full searchable text for this bhajan (title + lyrics + all fields)
+      const searchableText = buildBhajanSearchIndex(bhajan);
+      
+      // Match if ANY search variant is found in the searchable text
       const matchesSearch = !searchTerm || 
-        bhajan.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        bhajan.lyrics.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (bhajan.deity && bhajan.deity.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (bhajan.author && bhajan.author.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (bhajan.keywords && bhajan.keywords.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (bhajan.category && bhajan.category.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (bhajan.scale && bhajan.scale.toLowerCase().includes(searchTerm.toLowerCase()));
+        searchVariants.some(variant => searchableText.includes(variant));
       
       const matchesCategory = filterCategory === '' || bhajan.category === filterCategory;
       const matchesDeity = filterDeity === '' || bhajan.deity === filterDeity;
@@ -1423,25 +1502,69 @@ function App() {
       
       return matchesSearch && matchesCategory && matchesDeity && matchesMood;
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bhajans, searchTerm, filterCategory, filterDeity, filterMood]);
 
   // Compute popular keywords from all bhajans for quick search dropdown
+  // Compute popular keywords from titles, deities, and explicit keywords for quick search
   const popularKeywords = React.useMemo(() => {
     const keywordMap = {};
+    
+    // Common words to exclude (stop words in Hindi and English)
+    const stopWords = new Set([
+      'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+      'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'has',
+      'have', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
+      'may', 'might', 'must', 'shall', 'can', 'cannot', 'this', 'that', 'these',
+      'those', 'i', 'me', 'my', 'we', 'our', 'you', 'your', 'he', 'she', 'it',
+      'they', 'them', 'their', 'अ', 'क', 'ग', 'च', 'ज', 'त', 'द', 'न', 'प', 'ब',
+      'भ', 'म', 'य', 'र', 'ल', 'व', 'श', 'स', 'ह', 'और', 'है', 'हैं', 'का', 'की',
+      'के', 'को', 'से', 'में', 'पर', 'भी', 'ही', 'तो', 'जो', 'यह', 'वह', 'मैं',
+      'तू', 'हम', 'तुम', 'आप', 'मेरे', 'तेरे', 'उसके', 'उनके'
+    ]);
+    
+    const addWord = (word, weight = 1) => {
+      const cleaned = word.trim().toLowerCase();
+      // Skip if too short, too long, a number, or stop word
+      if (cleaned.length < 2 || cleaned.length > 25) return;
+      if (stopWords.has(cleaned)) return;
+      if (/^\d+$/.test(cleaned)) return;
+      keywordMap[cleaned] = (keywordMap[cleaned] || 0) + weight;
+    };
+    
     bhajans.forEach(bhajan => {
+      // Explicit keywords get highest weight (3x)
       if (bhajan.keywords) {
         bhajan.keywords.split(',').forEach(kw => {
-          const cleaned = kw.trim().toLowerCase();
-          if (cleaned && cleaned.length > 1) {
-            keywordMap[cleaned] = (keywordMap[cleaned] || 0) + 1;
-          }
+          addWord(kw, 3);
         });
+      }
+      
+      // Title words get high weight (2x)
+      if (bhajan.title) {
+        // Split on spaces and common punctuation
+        bhajan.title.split(/[\s,।:|/\-—]+/).forEach(w => {
+          addWord(w, 2);
+        });
+      }
+      
+      // Deity gets weight 2
+      if (bhajan.deity) {
+        addWord(bhajan.deity, 2);
+      }
+      
+      // Author and category get weight 1
+      if (bhajan.author) {
+        bhajan.author.split(/\s+/).forEach(w => addWord(w, 1));
+      }
+      if (bhajan.category) {
+        addWord(bhajan.category, 1);
       }
     });
     
     return Object.entries(keywordMap)
       .sort((a, b) => b[1] - a[1])
-      .slice(0, 25)
+      .slice(0, 30)
       .map(([keyword]) => keyword);
   }, [bhajans]);
 
@@ -1600,7 +1723,7 @@ function App() {
             <div className="relative flex-1">
               <input
                 type="text"
-                placeholder="खोजें भजन, देवता, शब्द..."
+                placeholder="खोजें / Search (हिंदी या English)..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10 pr-10 py-2 w-full border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400 text-sm sm:text-base"
