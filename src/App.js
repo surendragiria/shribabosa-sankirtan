@@ -111,6 +111,9 @@ function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [voiceSearchActive, setVoiceSearchActive] = useState(false);
   const [voiceSearchSupported, setVoiceSearchSupported] = useState(false);
+  const [voiceLang, setVoiceLang] = useState(() => 
+    localStorage.getItem('babosa-voice-lang') || 'hi-IN'
+  );
   const recognitionRef = useRef(null);
   const [showMenu, setShowMenu] = useState(false);
   const [activeView, setActiveView] = useState('home');
@@ -1299,13 +1302,12 @@ function App() {
       
       recognition.continuous = false;
       recognition.interimResults = false;
-      // Support both English and Hindi - browsers will auto-detect
-      recognition.lang = 'en-IN';
+      recognition.lang = voiceLang; // Use selected language (default Hindi)
       recognition.maxAlternatives = 3;
       
       recognition.onresult = (event) => {
         const transcript = event.results[0][0].transcript;
-        console.log('Voice search result:', transcript);
+        console.log('Voice search result (' + voiceLang + '):', transcript);
         setSearchTerm(transcript);
         setVoiceSearchActive(false);
       };
@@ -1323,6 +1325,8 @@ function App() {
           alert('🎤 Network error. Voice search requires an internet connection.');
         } else if (event.error === 'audio-capture') {
           alert('🎤 No microphone found. Please check your microphone and try again.');
+        } else if (event.error === 'language-not-supported') {
+          alert(`🎤 ${voiceLang === 'hi-IN' ? 'हिंदी' : 'English'} voice search is not supported on this device. Try switching language.`);
         } else {
           alert(`🎤 Voice search failed: ${event.error}. Please try again.`);
         }
@@ -1334,7 +1338,14 @@ function App() {
       
       recognitionRef.current = recognition;
     }
-  }, []);
+  }, [voiceLang]);
+
+  // Toggle voice search language between Hindi and English
+  const toggleVoiceLang = () => {
+    const newLang = voiceLang === 'hi-IN' ? 'en-IN' : 'hi-IN';
+    setVoiceLang(newLang);
+    localStorage.setItem('babosa-voice-lang', newLang);
+  };
 
   const startVoiceSearch = () => {
     if (!recognitionRef.current || !voiceSearchSupported) {
@@ -1691,21 +1702,33 @@ function App() {
             </div>
             
             <div className="flex items-center space-x-1 sm:space-x-2 flex-shrink-0">
-              {/* Voice search button */}
+              {/* Voice search with language toggle */}
               {voiceSearchSupported && (
-                <button
-                  onClick={voiceSearchActive ? stopVoiceSearch : startVoiceSearch}
-                  className={`p-2 rounded-lg transition-colors ${
-                    voiceSearchActive 
-                      ? 'bg-red-100 text-red-600 animate-pulse' 
-                      : 'hover:bg-orange-100 text-orange-600'
-                  }`}
-                  title="Voice Search"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                  </svg>
-                </button>
+                <div className="flex items-center bg-orange-50 rounded-lg overflow-hidden border border-orange-200">
+                  {/* Language toggle pill */}
+                  <button
+                    onClick={toggleVoiceLang}
+                    className="px-2 py-2 text-xs font-bold text-orange-700 hover:bg-orange-100 transition-colors border-r border-orange-200"
+                    title={`Voice language: ${voiceLang === 'hi-IN' ? 'हिंदी (Hindi)' : 'English'} - Tap to switch`}
+                  >
+                    {voiceLang === 'hi-IN' ? 'हि' : 'EN'}
+                  </button>
+                  
+                  {/* Voice mic button */}
+                  <button
+                    onClick={voiceSearchActive ? stopVoiceSearch : startVoiceSearch}
+                    className={`p-2 transition-colors ${
+                      voiceSearchActive 
+                        ? 'bg-red-100 text-red-600 animate-pulse' 
+                        : 'hover:bg-orange-100 text-orange-600'
+                    }`}
+                    title={`Voice Search in ${voiceLang === 'hi-IN' ? 'हिंदी' : 'English'}`}
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                    </svg>
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -1757,9 +1780,14 @@ function App() {
           </div>
 
           {/* Sync status - Below search on mobile */}
-          <div className="mt-2 flex justify-between items-center">
+          <div className="mt-2 flex justify-between items-center flex-wrap gap-1">
             <SyncStatusDisplay />
-            {searchTerm && (
+            {voiceSearchActive && (
+              <span className="text-xs text-red-600 font-semibold animate-pulse">
+                🎤 {voiceLang === 'hi-IN' ? 'हिंदी में सुन रहा हूँ...' : 'Listening in English...'}
+              </span>
+            )}
+            {!voiceSearchActive && searchTerm && (
               <span className="text-xs text-amber-600">
                 🔍 Searching: <strong>{searchTerm}</strong>
               </span>
