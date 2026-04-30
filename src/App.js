@@ -1455,13 +1455,6 @@ function App() {
     return Array.from(variants);
   };
 
-  // Check if any search variant matches the bhajan field
-  const matchesAnyVariant = (fieldValue, variants) => {
-    if (!fieldValue) return false;
-    const lower = fieldValue.toLowerCase();
-    return variants.some(v => lower.includes(v));
-  };
-
   // Build searchable index for each bhajan - includes ALL words from title, lyrics, etc.
   // This allows dynamic search where any word in any bhajan becomes searchable
   const buildBhajanSearchIndex = (bhajan) => {
