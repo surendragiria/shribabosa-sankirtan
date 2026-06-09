@@ -100,6 +100,30 @@ function App() {
   };
 
   const [bhajans, setBhajans] = useState(getInitialBhajans);
+  
+  // Programs (Playlists) state - stored in localStorage
+  // Each program: { id, name, date, notes, bhajanIds: [array of bhajan ids in order], cloudId? }
+  const [programs, setPrograms] = useState(() => {
+    try {
+      const saved = localStorage.getItem('babosa-programs');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  
+  // Active program being viewed/edited
+  const [selectedProgram, setSelectedProgram] = useState(null);
+  // UI states for programs
+  const [showProgramsList, setShowProgramsList] = useState(false);
+  const [showCreateProgram, setShowCreateProgram] = useState(false);
+  const [showAddBhajanToProgram, setShowAddBhajanToProgram] = useState(false);
+  const [editingProgram, setEditingProgram] = useState(null);
+  // Live program mode (perform mode)
+  const [programMode, setProgramMode] = useState(null); // null or {programId, currentIndex}
+  // New program form
+  const [newProgramName, setNewProgramName] = useState('');
+  const [newProgramDate, setNewProgramDate] = useState('');
+  const [newProgramNotes, setNewProgramNotes] = useState('');
+  
   const [showUpload, setShowUpload] = useState(false);
   const [selectedBhajan, setSelectedBhajan] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -172,6 +196,190 @@ function App() {
       }
     }
   }, [bhajans]);
+
+  // Save programs to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('babosa-programs', JSON.stringify(programs));
+      console.log('Saved', programs.length, 'programs to localStorage');
+    } catch (error) {
+      console.error('Error saving programs:', error);
+    }
+  }, [programs]);
+
+  // =========================================
+  // PROGRAM (PLAYLIST) MANAGEMENT FUNCTIONS
+  // =========================================
+  
+  // Create a new program
+  const createProgram = () => {
+    if (!newProgramName.trim()) {
+      alert('Please enter a program name');
+      return;
+    }
+    const newProgram = {
+      id: Date.now(),
+      name: newProgramName.trim(),
+      date: newProgramDate || new Date().toISOString().split('T')[0],
+      notes: newProgramNotes.trim(),
+      bhajanIds: [],
+      createdAt: new Date().toISOString()
+    };
+    setPrograms(prev => [newProgram, ...prev]);
+    setNewProgramName('');
+    setNewProgramDate('');
+    setNewProgramNotes('');
+    setShowCreateProgram(false);
+    setSelectedProgram(newProgram);
+    alert('✅ Program "' + newProgram.name + '" created!');
+  };
+  
+  // Update existing program
+  const updateProgram = () => {
+    if (!editingProgram || !newProgramName.trim()) {
+      alert('Please enter a program name');
+      return;
+    }
+    const updated = {
+      ...editingProgram,
+      name: newProgramName.trim(),
+      date: newProgramDate || editingProgram.date,
+      notes: newProgramNotes.trim()
+    };
+    setPrograms(prev => prev.map(p => p.id === editingProgram.id ? updated : p));
+    if (selectedProgram && selectedProgram.id === editingProgram.id) {
+      setSelectedProgram(updated);
+    }
+    setEditingProgram(null);
+    setNewProgramName('');
+    setNewProgramDate('');
+    setNewProgramNotes('');
+    setShowCreateProgram(false);
+  };
+  
+  // Delete a program
+  const deleteProgram = (programId) => {
+    const program = programs.find(p => p.id === programId);
+    if (!program) return;
+    if (!window.confirm(`Delete program "${program.name}"?\n\nThis will not delete the bhajans, only the program list.`)) return;
+    setPrograms(prev => prev.filter(p => p.id !== programId));
+    if (selectedProgram && selectedProgram.id === programId) {
+      setSelectedProgram(null);
+    }
+  };
+  
+  // Start editing a program
+  const startEditProgram = (program) => {
+    setEditingProgram(program);
+    setNewProgramName(program.name);
+    setNewProgramDate(program.date);
+    setNewProgramNotes(program.notes || '');
+    setShowCreateProgram(true);
+  };
+  
+  // Add bhajan to selected program
+  const addBhajanToProgram = (bhajanId) => {
+    if (!selectedProgram) return;
+    if (selectedProgram.bhajanIds.includes(bhajanId)) {
+      alert('This bhajan is already in the program');
+      return;
+    }
+    const updated = {
+      ...selectedProgram,
+      bhajanIds: [...selectedProgram.bhajanIds, bhajanId]
+    };
+    setPrograms(prev => prev.map(p => p.id === selectedProgram.id ? updated : p));
+    setSelectedProgram(updated);
+  };
+  
+  // Remove bhajan from program
+  const removeBhajanFromProgram = (bhajanId) => {
+    if (!selectedProgram) return;
+    const updated = {
+      ...selectedProgram,
+      bhajanIds: selectedProgram.bhajanIds.filter(id => id !== bhajanId)
+    };
+    setPrograms(prev => prev.map(p => p.id === selectedProgram.id ? updated : p));
+    setSelectedProgram(updated);
+  };
+  
+  // Move bhajan up in program order
+  const moveBhajanUp = (index) => {
+    if (!selectedProgram || index === 0) return;
+    const newIds = [...selectedProgram.bhajanIds];
+    [newIds[index - 1], newIds[index]] = [newIds[index], newIds[index - 1]];
+    const updated = { ...selectedProgram, bhajanIds: newIds };
+    setPrograms(prev => prev.map(p => p.id === selectedProgram.id ? updated : p));
+    setSelectedProgram(updated);
+  };
+  
+  // Move bhajan down in program order
+  const moveBhajanDown = (index) => {
+    if (!selectedProgram || index >= selectedProgram.bhajanIds.length - 1) return;
+    const newIds = [...selectedProgram.bhajanIds];
+    [newIds[index], newIds[index + 1]] = [newIds[index + 1], newIds[index]];
+    const updated = { ...selectedProgram, bhajanIds: newIds };
+    setPrograms(prev => prev.map(p => p.id === selectedProgram.id ? updated : p));
+    setSelectedProgram(updated);
+  };
+  
+  // Get bhajans for a program (preserves order)
+  const getProgramBhajans = (program) => {
+    if (!program) return [];
+    return program.bhajanIds
+      .map(id => bhajans.find(b => b.id === id))
+      .filter(Boolean);
+  };
+  
+  // Start Live Program Mode (performance mode)
+  const startProgramMode = (program) => {
+    const programBhajans = getProgramBhajans(program);
+    if (programBhajans.length === 0) {
+      alert('This program has no bhajans yet. Add some bhajans first!');
+      return;
+    }
+    setProgramMode({ programId: program.id, currentIndex: 0 });
+    setSelectedBhajan(programBhajans[0]);
+    setShowProgramsList(false);
+    setSelectedProgram(null);
+    window.scrollTo(0, 0);
+  };
+  
+  // Navigate to next bhajan in program mode
+  const programNext = () => {
+    if (!programMode) return;
+    const program = programs.find(p => p.id === programMode.programId);
+    if (!program) return;
+    const programBhajans = getProgramBhajans(program);
+    const nextIndex = programMode.currentIndex + 1;
+    if (nextIndex >= programBhajans.length) {
+      alert('🙏 Program complete! All bhajans sung.');
+      return;
+    }
+    setProgramMode({ ...programMode, currentIndex: nextIndex });
+    setSelectedBhajan(programBhajans[nextIndex]);
+    window.scrollTo(0, 0);
+  };
+  
+  // Navigate to previous bhajan in program mode
+  const programPrev = () => {
+    if (!programMode) return;
+    const program = programs.find(p => p.id === programMode.programId);
+    if (!program) return;
+    const programBhajans = getProgramBhajans(program);
+    const prevIndex = programMode.currentIndex - 1;
+    if (prevIndex < 0) return;
+    setProgramMode({ ...programMode, currentIndex: prevIndex });
+    setSelectedBhajan(programBhajans[prevIndex]);
+    window.scrollTo(0, 0);
+  };
+  
+  // Exit program mode
+  const exitProgramMode = () => {
+    setProgramMode(null);
+    setSelectedBhajan(null);
+  };
+
 
   // Regular export bhajans
   const exportBhajans = () => {
@@ -1300,27 +1508,42 @@ function App() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       const recognition = new SpeechRecognition();
       
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = voiceLang; // Use selected language (default Hindi)
-      recognition.maxAlternatives = 3;
+      recognition.continuous = true;       // Keep listening until manually stopped
+      recognition.interimResults = true;   // Get results AS user speaks (real-time)
+      recognition.lang = voiceLang;
+      recognition.maxAlternatives = 1;
       
       recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        console.log('Voice search result (' + voiceLang + '):', transcript);
-        setSearchTerm(transcript);
-        setVoiceSearchActive(false);
+        // Build transcript from all results so far (final + interim)
+        let finalTranscript = '';
+        let interimTranscript = '';
+        
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript;
+          } else {
+            interimTranscript += transcript;
+          }
+        }
+        
+        // Combine final + interim for live display
+        const liveText = (finalTranscript + interimTranscript).trim();
+        if (liveText) {
+          console.log('Voice (' + voiceLang + '):', liveText, '[final:', !!finalTranscript, ']');
+          setSearchTerm(liveText);
+        }
       };
       
       recognition.onerror = (event) => {
         console.error('Voice search error:', event.error);
         setVoiceSearchActive(false);
         
-        // Show user-friendly error messages
+        // Don't show error for 'no-speech' or 'aborted' (normal interruptions)
+        if (event.error === 'no-speech' || event.error === 'aborted') return;
+        
         if (event.error === 'not-allowed' || event.error === 'permission-denied') {
           alert('🎤 Microphone permission denied. Please allow microphone access in your browser settings and try again.');
-        } else if (event.error === 'no-speech') {
-          alert('🎤 No speech detected. Please speak clearly and try again.');
         } else if (event.error === 'network') {
           alert('🎤 Network error. Voice search requires an internet connection.');
         } else if (event.error === 'audio-capture') {
@@ -1354,6 +1577,7 @@ function App() {
     }
     
     try {
+      setSearchTerm(''); // Clear previous search to start fresh
       setVoiceSearchActive(true);
       recognitionRef.current.start();
     } catch (error) {
@@ -1363,6 +1587,7 @@ function App() {
       if (error.message && error.message.includes('already started')) {
         recognitionRef.current.stop();
         setTimeout(() => {
+          setSearchTerm('');
           setVoiceSearchActive(true);
           recognitionRef.current.start();
         }, 100);
@@ -1858,6 +2083,38 @@ function App() {
                 <span className="font-semibold">Upload Bhajan</span>
               </button>
 
+              {/* Programs (Playlists) Section */}
+              <div className="pt-4 border-t border-orange-200">
+                <h4 className="text-sm font-semibold text-amber-700 mb-3 px-4">🎵 Programs</h4>
+                <button
+                  onClick={() => {
+                    setShowProgramsList(true);
+                    setShowMenu(false);
+                  }}
+                  className="w-full flex items-center p-3 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:shadow-lg transition-all mb-2"
+                >
+                  <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19V6l12-3v13M9 19c0 1.657-1.79 3-4 3s-4-1.343-4-3 1.79-3 4-3 4 1.343 4 3zm12-3c0 1.657-1.79 3-4 3s-4-1.343-4-3 1.79-3 4-3 4 1.343 4 3zM9 10l12-3" />
+                  </svg>
+                  <span className="text-sm font-semibold flex-1 text-left">My Programs</span>
+                  {programs.length > 0 && (
+                    <span className="bg-white/30 px-2 py-0.5 rounded-full text-xs font-bold">{programs.length}</span>
+                  )}
+                </button>
+                <button
+                  onClick={() => {
+                    setShowCreateProgram(true);
+                    setShowMenu(false);
+                  }}
+                  className="w-full flex items-center p-3 rounded-lg hover:bg-orange-100 text-amber-800 transition-colors"
+                >
+                  <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                  <span className="text-sm font-medium">Create New Program</span>
+                </button>
+              </div>
+
               {/* Cloud Sync Section */}
               <div className="pt-4 border-t border-orange-200">
                 <h4 className="text-sm font-semibold text-amber-700 mb-3 px-4">☁️ Cloud Sync</h4>
@@ -1958,6 +2215,396 @@ function App() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================ */}
+      {/* PROGRAMS LIST MODAL - Shows all programs */}
+      {/* ============================================ */}
+      {showProgramsList && !selectedProgram && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-2xl w-full my-4 max-h-[95vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg sm:text-xl font-bold text-amber-900">🎵 My Programs</h3>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setShowCreateProgram(true);
+                  }}
+                  className="px-3 py-1.5 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg text-sm font-semibold hover:shadow-md"
+                >
+                  + New
+                </button>
+                <button
+                  onClick={() => setShowProgramsList(false)}
+                  className="p-2 hover:bg-gray-100 rounded-lg"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {programs.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="text-6xl mb-4">🎵</div>
+                <p className="text-amber-800 font-semibold mb-2">No programs yet</p>
+                <p className="text-sm text-amber-600 mb-4">Create a program to organize bhajans for live shows, satsangs, or special events.</p>
+                <button
+                  onClick={() => setShowCreateProgram(true)}
+                  className="px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg font-semibold hover:shadow-lg"
+                >
+                  Create First Program
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {programs.map(program => {
+                  const programBhajansCount = program.bhajanIds.filter(id => bhajans.find(b => b.id === id)).length;
+                  return (
+                    <div
+                      key={program.id}
+                      className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-4 border-2 border-purple-200 hover:border-purple-400 transition-colors"
+                    >
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-bold text-purple-900 text-base sm:text-lg truncate">{program.name}</h4>
+                          <p className="text-xs text-purple-600">📅 {program.date} • 🎵 {programBhajansCount} bhajans</p>
+                          {program.notes && (
+                            <p className="text-xs text-gray-600 mt-1 line-clamp-2">{program.notes}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex gap-2 mt-3 flex-wrap">
+                        <button
+                          onClick={() => setSelectedProgram(program)}
+                          className="flex-1 px-3 py-2 bg-purple-500 text-white rounded-lg text-sm font-semibold hover:bg-purple-600 transition-colors"
+                        >
+                          📋 View & Edit
+                        </button>
+                        <button
+                          onClick={() => startProgramMode(program)}
+                          disabled={programBhajansCount === 0}
+                          className="flex-1 px-3 py-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-lg text-sm font-semibold hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                        >
+                          ▶️ Start Program
+                        </button>
+                        <button
+                          onClick={() => startEditProgram(program)}
+                          className="px-3 py-2 bg-amber-100 text-amber-700 rounded-lg text-sm hover:bg-amber-200 transition-colors"
+                          title="Edit details"
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          onClick={() => deleteProgram(program.id)}
+                          className="px-3 py-2 bg-red-100 text-red-600 rounded-lg text-sm hover:bg-red-200 transition-colors"
+                          title="Delete"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ============================================ */}
+      {/* PROGRAM DETAIL VIEW - View/edit a single program */}
+      {/* ============================================ */}
+      {selectedProgram && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-3xl w-full my-4 max-h-[95vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4 gap-2">
+              <button
+                onClick={() => setSelectedProgram(null)}
+                className="p-2 hover:bg-orange-100 text-orange-600 rounded-lg flex-shrink-0"
+                title="Back to programs"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-lg sm:text-xl font-bold text-amber-900 truncate">{selectedProgram.name}</h3>
+                <p className="text-xs text-purple-600">📅 {selectedProgram.date} • 🎵 {selectedProgram.bhajanIds.filter(id => bhajans.find(b => b.id === id)).length} bhajans</p>
+              </div>
+              <button
+                onClick={() => {
+                  setSelectedProgram(null);
+                  setShowProgramsList(false);
+                }}
+                className="p-2 hover:bg-gray-100 rounded-lg flex-shrink-0"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {selectedProgram.notes && (
+              <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <p className="text-sm text-amber-800 whitespace-pre-wrap">{selectedProgram.notes}</p>
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex gap-2 mb-4 flex-wrap">
+              <button
+                onClick={() => setShowAddBhajanToProgram(true)}
+                className="flex-1 px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-lg font-semibold hover:shadow-lg transition-all text-sm"
+              >
+                + Add Bhajans
+              </button>
+              <button
+                onClick={() => startProgramMode(selectedProgram)}
+                disabled={selectedProgram.bhajanIds.filter(id => bhajans.find(b => b.id === id)).length === 0}
+                className="flex-1 px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-lg font-semibold hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm"
+              >
+                ▶️ Start Program
+              </button>
+            </div>
+
+            {/* Bhajans list with reordering */}
+            {(() => {
+              const programBhajans = getProgramBhajans(selectedProgram);
+              if (programBhajans.length === 0) {
+                return (
+                  <div className="text-center py-8 bg-gray-50 rounded-lg">
+                    <p className="text-gray-500 mb-3">No bhajans added yet</p>
+                    <button
+                      onClick={() => setShowAddBhajanToProgram(true)}
+                      className="px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-semibold hover:bg-orange-600"
+                    >
+                      Add First Bhajan
+                    </button>
+                  </div>
+                );
+              }
+              return (
+                <div className="space-y-2">
+                  {programBhajans.map((bhajan, index) => (
+                    <div
+                      key={bhajan.id}
+                      className="bg-white border-2 border-orange-200 rounded-lg p-3 hover:border-orange-400 transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="bg-gradient-to-br from-purple-500 to-pink-500 text-white w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0">
+                          {index + 1}
+                        </span>
+                        <div className="flex-1 min-w-0 cursor-pointer" onClick={() => {
+                          setSelectedBhajan(bhajan);
+                          setSelectedProgram(null);
+                          setShowProgramsList(false);
+                        }}>
+                          <h5 className="font-semibold text-amber-900 truncate">{bhajan.title}</h5>
+                          <p className="text-xs text-gray-600 line-clamp-1">{bhajan.lyrics.slice(0, 60)}...</p>
+                          <div className="flex gap-2 mt-1 flex-wrap">
+                            {bhajan.deity && <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">🙏 {bhajan.deity}</span>}
+                            {bhajan.scale && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">🎵 {bhajan.scale}</span>}
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-1 flex-shrink-0">
+                          <button
+                            onClick={() => moveBhajanUp(index)}
+                            disabled={index === 0}
+                            className="p-1 text-orange-600 hover:bg-orange-100 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                            title="Move up"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 15l7-7 7 7" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => moveBhajanDown(index)}
+                            disabled={index === programBhajans.length - 1}
+                            className="p-1 text-orange-600 hover:bg-orange-100 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                            title="Move down"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </button>
+                        </div>
+                        <button
+                          onClick={() => removeBhajanFromProgram(bhajan.id)}
+                          className="p-2 text-red-500 hover:bg-red-50 rounded-lg flex-shrink-0"
+                          title="Remove from program"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* ============================================ */}
+      {/* CREATE/EDIT PROGRAM MODAL */}
+      {/* ============================================ */}
+      {showCreateProgram && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-md w-full my-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg sm:text-xl font-bold text-amber-900">
+                {editingProgram ? '✏️ Edit Program' : '🎵 Create New Program'}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowCreateProgram(false);
+                  setEditingProgram(null);
+                  setNewProgramName('');
+                  setNewProgramDate('');
+                  setNewProgramNotes('');
+                }}
+                className="p-2 hover:bg-gray-100 rounded-lg"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-semibold text-amber-800 mb-1">Program Name *</label>
+                <input
+                  type="text"
+                  value={newProgramName}
+                  onChange={(e) => setNewProgramName(e.target.value)}
+                  className="w-full px-3 py-2 border-2 border-orange-200 rounded-lg focus:ring-2 focus:ring-orange-300"
+                  placeholder="e.g., Babosa Jagran 25 Dec"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-amber-800 mb-1">Date</label>
+                <input
+                  type="date"
+                  value={newProgramDate}
+                  onChange={(e) => setNewProgramDate(e.target.value)}
+                  className="w-full px-3 py-2 border-2 border-orange-200 rounded-lg focus:ring-2 focus:ring-orange-300"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-amber-800 mb-1">Notes (optional)</label>
+                <textarea
+                  value={newProgramNotes}
+                  onChange={(e) => setNewProgramNotes(e.target.value)}
+                  rows={3}
+                  className="w-full px-3 py-2 border-2 border-orange-200 rounded-lg focus:ring-2 focus:ring-orange-300"
+                  placeholder="e.g., Venue, special instructions, sponsors..."
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2 mt-5">
+              <button
+                onClick={editingProgram ? updateProgram : createProgram}
+                className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-2.5 rounded-lg font-semibold hover:shadow-lg text-sm"
+              >
+                {editingProgram ? '✅ Update' : '✅ Create Program'}
+              </button>
+              <button
+                onClick={() => {
+                  setShowCreateProgram(false);
+                  setEditingProgram(null);
+                  setNewProgramName('');
+                  setNewProgramDate('');
+                  setNewProgramNotes('');
+                }}
+                className="px-4 py-2.5 bg-gray-200 text-gray-700 rounded-lg font-semibold hover:bg-gray-300 text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================ */}
+      {/* ADD BHAJAN TO PROGRAM - Select from collection */}
+      {/* ============================================ */}
+      {showAddBhajanToProgram && selectedProgram && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-2xl w-full my-4 max-h-[95vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg sm:text-xl font-bold text-amber-900">Add Bhajans to Program</h3>
+                <p className="text-xs text-purple-600 mt-1">"{selectedProgram.name}" • Tap bhajans to add/remove</p>
+              </div>
+              <button
+                onClick={() => setShowAddBhajanToProgram(false)}
+                className="p-2 hover:bg-gray-100 rounded-lg flex-shrink-0"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Search within add-to-program */}
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full px-3 py-2 border-2 border-orange-200 rounded-lg focus:ring-2 focus:ring-orange-300 mb-3"
+              placeholder="🔍 खोजें / Search bhajans to add..."
+            />
+
+            <div className="text-xs text-purple-700 mb-2 font-semibold">
+              ✅ {selectedProgram.bhajanIds.length} bhajans selected
+            </div>
+
+            <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+              {filteredBhajans.map(bhajan => {
+                const isAdded = selectedProgram.bhajanIds.includes(bhajan.id);
+                return (
+                  <div
+                    key={bhajan.id}
+                    onClick={() => isAdded ? removeBhajanFromProgram(bhajan.id) : addBhajanToProgram(bhajan.id)}
+                    className={`p-3 rounded-lg cursor-pointer transition-all border-2 ${
+                      isAdded
+                        ? 'bg-green-50 border-green-400'
+                        : 'bg-white border-orange-200 hover:border-orange-400'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${
+                        isAdded ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-400'
+                      }`}>
+                        {isAdded ? '✓' : '+'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h5 className="font-semibold text-amber-900 truncate text-sm">{bhajan.title}</h5>
+                        <p className="text-xs text-gray-600 line-clamp-1">{bhajan.lyrics.slice(0, 60)}...</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={() => setShowAddBhajanToProgram(false)}
+              className="w-full mt-4 bg-gradient-to-r from-green-500 to-emerald-500 text-white px-4 py-2.5 rounded-lg font-semibold hover:shadow-lg text-sm"
+            >
+              ✅ Done ({selectedProgram.bhajanIds.length} bhajans)
+            </button>
           </div>
         </div>
       )}
@@ -2094,6 +2741,57 @@ service cloud.firestore {
           <div key={`bhajan-${selectedBhajan.id}`} style={{ minHeight: '100vh' }}>
             {/* Scroll anchor at very top */}
             <div id="bhajan-top-anchor" style={{ position: 'absolute', top: 0, height: 1, width: 1 }} />
+            
+            {/* Program Mode Banner - shows when in live program mode */}
+            {programMode && (() => {
+              const currentProgram = programs.find(p => p.id === programMode.programId);
+              if (!currentProgram) return null;
+              const programBhajans = getProgramBhajans(currentProgram);
+              const total = programBhajans.length;
+              const current = programMode.currentIndex + 1;
+              return (
+                <div className="mb-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl shadow-lg p-3">
+                  <div className="flex items-center justify-between mb-2 gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs opacity-90">🎵 LIVE PROGRAM</p>
+                      <p className="font-bold text-sm sm:text-base truncate">{currentProgram.name}</p>
+                    </div>
+                    <span className="bg-white/30 px-3 py-1 rounded-full text-sm font-bold flex-shrink-0">
+                      {current} / {total}
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={programPrev}
+                      disabled={programMode.currentIndex === 0}
+                      className="flex-1 px-3 py-2 bg-white/20 hover:bg-white/30 disabled:bg-white/10 disabled:opacity-50 rounded-lg font-semibold text-sm transition-all flex items-center justify-center gap-1"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
+                      </svg>
+                      Previous
+                    </button>
+                    <button
+                      onClick={exitProgramMode}
+                      className="px-3 py-2 bg-red-500/80 hover:bg-red-500 rounded-lg font-semibold text-sm transition-all"
+                      title="Exit program"
+                    >
+                      ✕
+                    </button>
+                    <button
+                      onClick={programNext}
+                      disabled={programMode.currentIndex >= total - 1}
+                      className="flex-1 px-3 py-2 bg-white/20 hover:bg-white/30 disabled:bg-white/10 disabled:opacity-50 rounded-lg font-semibold text-sm transition-all flex items-center justify-center gap-1"
+                    >
+                      Next
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
             
             <div className="mb-4 sm:mb-6 flex items-center justify-between gap-2 bg-white/80 backdrop-blur-md rounded-xl shadow-md p-2 sm:p-3">
               <div className="flex items-center gap-1 sm:gap-2">
@@ -2270,6 +2968,44 @@ service cloud.firestore {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                   </svg>
                   Edit
+                </button>
+
+                <button
+                  onClick={() => {
+                    if (programs.length === 0) {
+                      alert('No programs yet. Create a program first from the menu!');
+                      return;
+                    }
+                    // Quick add - show a dropdown of programs
+                    const programNames = programs.map((p, i) => `${i + 1}. ${p.name} (${p.bhajanIds.length} bhajans)`).join('\n');
+                    const choice = window.prompt(
+                      `Add "${selectedBhajan.title}" to which program?\n\n${programNames}\n\nEnter program number (1-${programs.length}):`,
+                      '1'
+                    );
+                    if (!choice) return;
+                    const idx = parseInt(choice) - 1;
+                    if (isNaN(idx) || idx < 0 || idx >= programs.length) {
+                      alert('Invalid program number');
+                      return;
+                    }
+                    const targetProgram = programs[idx];
+                    if (targetProgram.bhajanIds.includes(selectedBhajan.id)) {
+                      alert(`This bhajan is already in "${targetProgram.name}"`);
+                      return;
+                    }
+                    const updated = {
+                      ...targetProgram,
+                      bhajanIds: [...targetProgram.bhajanIds, selectedBhajan.id]
+                    };
+                    setPrograms(prev => prev.map(p => p.id === targetProgram.id ? updated : p));
+                    alert(`✅ Added to "${targetProgram.name}"`);
+                  }}
+                  className="flex items-center justify-center bg-gradient-to-r from-purple-500 to-pink-500 hover:shadow-lg text-white px-3 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold transition-all text-sm sm:text-base"
+                >
+                  <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1.5 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19V6l12-3v13M9 19c0 1.657-1.79 3-4 3s-4-1.343-4-3 1.79-3 4-3 4 1.343 4 3zm12-3c0 1.657-1.79 3-4 3s-4-1.343-4-3 1.79-3 4-3 4 1.343 4 3zM9 10l12-3" />
+                  </svg>
+                  + Program
                 </button>
 
                 <button
