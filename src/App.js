@@ -1168,14 +1168,26 @@ function App() {
 
       const db = window.firebase.firestore();
       
-      // Enable offline persistence
-      db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
-        if (err.code === 'failed-precondition') {
-          console.log('Offline persistence already enabled in another tab');
-        } else if (err.code === 'unimplemented') {
-          console.log('Browser does not support offline persistence');
+      // Enable offline persistence ONCE per session (wrapped in try/catch
+      // because it throws synchronously if Firestore was already started)
+      if (!window._firestorePersistenceTried) {
+        window._firestorePersistenceTried = true;
+        try {
+          db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
+            if (err.code === 'failed-precondition') {
+              console.log('Offline persistence already enabled in another tab');
+            } else if (err.code === 'unimplemented') {
+              console.log('Browser does not support offline persistence');
+            } else {
+              console.log('Persistence error (non-fatal):', err.code);
+            }
+          });
+        } catch (persistenceErr) {
+          // Firestore already started in this session - persistence can't be enabled
+          // but Firestore still works fine. Just log and continue.
+          console.log('Persistence skipped (Firestore already started):', persistenceErr.message);
         }
-      });
+      }
 
       // Sign in anonymously (no user sign-in required)
       window.firebase.auth().signInAnonymously().then(() => {
