@@ -1619,7 +1619,6 @@ function App() {
   const shareToWhatsApp = (bhajan) => {
     let shareText = `🕉️ ${bhajan.title}\n\n`;
     shareText += `${bhajan.lyrics}\n\n`;
-    if (bhajan.author) shareText += `✍️ Author: ${bhajan.author}\n`;
     if (bhajan.deity) shareText += `🙏 Deity: ${bhajan.deity}\n`;
     if (bhajan.category) shareText += `📖 Category: ${bhajan.category}\n`;
     if (bhajan.scale) shareText += `🎵 Scale: ${bhajan.scale}\n`;
@@ -1628,29 +1627,6 @@ function App() {
     const text = encodeURIComponent(shareText);
     const url = `https://api.whatsapp.com/send?text=${text}`;
     window.open(url, '_blank');
-  };
-
-  const copyToClipboard = async (bhajan) => {
-    let shareText = `🕉️ ${bhajan.title}\n\n`;
-    shareText += `${bhajan.lyrics}\n\n`;
-    if (bhajan.author) shareText += `✍️ Author: ${bhajan.author}\n`;
-    if (bhajan.deity) shareText += `🙏 Deity: ${bhajan.deity}\n`;
-    if (bhajan.category) shareText += `📖 Category: ${bhajan.category}\n`;
-    if (bhajan.scale) shareText += `🎵 Scale: ${bhajan.scale}\n`;
-    shareText += `\n🕉️ Shared from बाबोसा संकीर्तन (Babosa Sankirtan)`;
-    
-    try {
-      await navigator.clipboard.writeText(shareText);
-      alert('Bhajan copied to clipboard! 📋');
-    } catch (err) {
-      const textArea = document.createElement('textarea');
-      textArea.value = shareText;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
-      alert('Bhajan copied to clipboard! 📋');
-    }
   };
 
   // Bilingual search helper - generates search variants for both English and Hindi
@@ -2856,11 +2832,6 @@ service cloud.firestore {
                       📖 {selectedBhajan.category}
                     </span>
                   )}
-                  {selectedBhajan.mood && (
-                    <span className="bg-blue-100 text-blue-800 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full text-xs sm:text-sm font-medium">
-                      💭 {selectedBhajan.mood}
-                    </span>
-                  )}
                   
                   {/* Scale Badge with Edit Option */}
                   {selectedBhajan.scale && (
@@ -2942,10 +2913,6 @@ service cloud.firestore {
                       </div>
                     </div>
                   </div>
-                )}
-
-                {selectedBhajan.author && (
-                  <p className="text-amber-700 font-medium mb-4">✍️ {selectedBhajan.author}</p>
                 )}
               </div>
 
@@ -3031,13 +2998,22 @@ service cloud.firestore {
                 </button>
 
                 <button
-                  onClick={() => copyToClipboard(selectedBhajan)}
-                  className="flex items-center justify-center bg-gray-500 hover:bg-gray-600 text-white px-3 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold transition-colors text-sm sm:text-base"
+                  onClick={() => {
+                    if (selectedBhajan.source && selectedBhajan.source.trim()) {
+                      const url = selectedBhajan.source.trim();
+                      // Add https:// if missing
+                      const fullUrl = url.match(/^https?:\/\//) ? url : 'https://' + url;
+                      window.open(fullUrl, '_blank', 'noopener,noreferrer');
+                    } else {
+                      alert('No source URL saved for this bhajan.\n\nTap "Edit" to add a source URL.');
+                    }
+                  }}
+                  className="flex items-center justify-center bg-blue-500 hover:bg-blue-600 text-white px-3 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold transition-colors text-sm sm:text-base"
                 >
                   <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1.5 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                   </svg>
-                  Copy
+                  Source
                 </button>
 
                 <button
@@ -3100,10 +3076,7 @@ service cloud.firestore {
                             </div>
                           )}
                           
-                          <div className="flex items-center justify-between text-xs text-amber-600">
-                            {bhajan.author && (
-                              <span className="truncate mr-2">✍️ {bhajan.author}</span>
-                            )}
+                          <div className="flex items-center justify-end text-xs text-amber-600">
                             <span className="text-orange-500 font-semibold whitespace-nowrap">
                               Read →
                             </span>
@@ -3319,22 +3292,6 @@ service cloud.firestore {
 
                       <div>
                         <label className="block text-sm font-semibold text-amber-800 mb-2">
-                          Author ✍️
-                        </label>
-                        <input
-                          type="text"
-                          value={editingBhajan ? editingBhajan.author : newBhajan.author}
-                          onChange={(e) => editingBhajan ?
-                            setEditingBhajan(prev => ({...prev, author: e.target.value})) :
-                            setNewBhajan(prev => ({...prev, author: e.target.value}))
-                          }
-                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
-                          placeholder="Traditional, Tulsidas, etc."
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-semibold text-amber-800 mb-2">
                           Scale/Raag 🎵
                         </label>
                         <input
@@ -3347,27 +3304,6 @@ service cloud.firestore {
                           className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
                           placeholder="Raag Yaman, C Major, Bhairav, etc."
                         />
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-semibold text-amber-800 mb-2">
-                          Mood 💭
-                        </label>
-                        <select
-                          value={editingBhajan ? editingBhajan.mood : newBhajan.mood}
-                          onChange={(e) => editingBhajan ?
-                            setEditingBhajan(prev => ({...prev, mood: e.target.value})) :
-                            setNewBhajan(prev => ({...prev, mood: e.target.value}))
-                          }
-                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
-                        >
-                          <option value="">Select mood...</option>
-                          <option value="Devotional">Devotional</option>
-                          <option value="Peaceful">Peaceful</option>
-                          <option value="Joyful">Joyful</option>
-                          <option value="Contemplative">Contemplative</option>
-                          <option value="Uplifting">Uplifting</option>
-                        </select>
                       </div>
                     </div>
 
@@ -3445,18 +3381,21 @@ service cloud.firestore {
 
                       <div>
                         <label className="block text-sm font-semibold text-amber-800 mb-2">
-                          Source 📚
+                          Source URL 🔗
                         </label>
                         <input
-                          type="text"
+                          type="url"
                           value={editingBhajan ? editingBhajan.source : newBhajan.source}
                           onChange={(e) => editingBhajan ?
                             setEditingBhajan(prev => ({...prev, source: e.target.value})) :
                             setNewBhajan(prev => ({...prev, source: e.target.value}))
                           }
                           className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
-                          placeholder="Book name, website, etc."
+                          placeholder="https://youtube.com/watch?v=... or any URL"
                         />
+                        <p className="text-xs text-gray-500 mt-1">
+                          💡 Paste a YouTube link, blog URL, or any web link to the bhajan
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -3499,17 +3438,6 @@ service cloud.firestore {
                   <option value="">All Deities</option>
                   {[...new Set(bhajans.map(b => b.deity).filter(Boolean))].map(deity => (
                     <option key={deity} value={deity}>{deity}</option>
-                  ))}
-                </select>
-
-                <select
-                  value={filterMood}
-                  onChange={(e) => setFilterMood(e.target.value)}
-                  className="px-3 py-2 border-2 border-orange-200 rounded-lg focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400 text-sm sm:text-base bg-white"
-                >
-                  <option value="">All Moods</option>
-                  {[...new Set(bhajans.map(b => b.mood).filter(Boolean))].map(mood => (
-                    <option key={mood} value={mood}>{mood}</option>
                   ))}
                 </select>
 
@@ -3595,24 +3523,12 @@ service cloud.firestore {
                             📖 {bhajan.category}
                           </span>
                         )}
-                        {bhajan.mood && (
-                          <span className="bg-blue-100 text-blue-800 px-2 sm:px-3 py-1 rounded-full text-xs font-medium">
-                            💭 {bhajan.mood}
-                          </span>
-                        )}
                         {bhajan.scale && (
                           <span className="bg-yellow-100 text-yellow-800 px-2 sm:px-3 py-1 rounded-full text-xs font-medium">
                             🎵 {bhajan.scale}
                           </span>
                         )}
                       </div>
-
-                      {bhajan.author && (
-                        <div className="flex items-center text-sm">
-                          <span className="text-orange-500 mr-2">✍️</span>
-                          <span className="font-medium truncate">{bhajan.author}</span>
-                        </div>
-                      )}
                     </div>
 
                     {/* Action buttons - Always visible on mobile, show on hover on desktop */}
