@@ -204,7 +204,8 @@ function App() {
     mood: '',
     scale: '',
     keywords: '',
-    source: ''
+    source: '',
+    dhun: ''
   });
 
   // Save to localStorage only - NO automatic downloads
@@ -408,17 +409,17 @@ function App() {
   // =========================================
   
   // Extract Mukhda from bhajan lyrics
-  // The Mukhda is typically the first 2-4 lines that repeat as the refrain
+  // The Mukhda is typically the first few lines that repeat as the refrain
   const extractMukhda = (bhajan) => {
     if (!bhajan || !bhajan.lyrics) return '';
-    // Take first non-empty lines up to first blank line, or first 4 lines
+    // Take first non-empty lines up to first blank line, or first 6 lines
     const lines = bhajan.lyrics.split('\n');
     const mukhdaLines = [];
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed && mukhdaLines.length > 0) break; // blank line ends mukhda
       if (trimmed) mukhdaLines.push(trimmed);
-      if (mukhdaLines.length >= 4) break;
+      if (mukhdaLines.length >= 6) break;
     }
     return mukhdaLines.join('\n');
   };
@@ -980,7 +981,8 @@ function App() {
       mood: '',
       scale: '',
       keywords: '',
-      source: ''
+      source: '',
+      dhun: ''
     });
     setExtractedText('');
     
@@ -1899,7 +1901,8 @@ function App() {
       bhajan.category || '',
       bhajan.scale || '',
       bhajan.mood || '',
-      bhajan.source || ''
+      bhajan.source || '',
+      bhajan.dhun || ''
     ].join(' ').toLowerCase();
     
     return allText;
@@ -3228,13 +3231,34 @@ function App() {
               </button>
             </div>
 
-            {/* Action button - Add mukhdas */}
-            <div className="mb-4">
+            {/* Action buttons row */}
+            <div className="mb-4 grid grid-cols-3 gap-2">
               <button
                 onClick={() => setShowAddBhajanToParody(true)}
-                className="w-full px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-lg font-semibold hover:shadow-lg transition-all text-sm"
+                className="px-3 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-lg font-semibold hover:shadow-lg transition-all text-xs sm:text-sm flex items-center justify-center gap-1"
               >
-                + Add Bhajans (Mukhdas)
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                Add Bhajans
+              </button>
+              <button
+                onClick={() => startEditParody(selectedParody)}
+                className="px-3 py-2 bg-amber-100 text-amber-800 rounded-lg font-semibold hover:bg-amber-200 transition-colors text-xs sm:text-sm flex items-center justify-center gap-1"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                Rename
+              </button>
+              <button
+                onClick={() => deleteParody(selectedParody.id)}
+                className="px-3 py-2 bg-red-100 text-red-600 rounded-lg font-semibold hover:bg-red-200 transition-colors text-xs sm:text-sm flex items-center justify-center gap-1"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Delete
               </button>
             </div>
 
@@ -3256,9 +3280,6 @@ function App() {
               }
               return (
                 <div className="space-y-3">
-                  <p className="text-xs text-rose-700 text-center italic">
-                    💡 Tap any mukhda to open the full bhajan
-                  </p>
                   {parodyBhajans.map((bhajan, index) => {
                     const mukhda = extractMukhda(bhajan);
                     return (
@@ -3308,15 +3329,14 @@ function App() {
                             </svg>
                           </button>
                         </div>
-                        {/* Clickable mukhda text */}
+                        {/* Full mukhda text - clickable to open full bhajan */}
                         <button
                           onClick={() => openBhajanFromParody(bhajan, selectedParody)}
                           className="w-full text-left p-4 hover:bg-white/70 transition-colors"
                         >
-                          <pre className="text-sm sm:text-base text-amber-900 font-medium whitespace-pre-wrap leading-relaxed font-sans">
+                          <div className="text-base sm:text-lg text-amber-900 font-medium whitespace-pre-wrap leading-relaxed">
                             {mukhda}
-                          </pre>
-                          <p className="text-xs text-rose-500 mt-2 font-semibold">Tap to open full bhajan →</p>
+                          </div>
                         </button>
                       </div>
                     );
@@ -3619,10 +3639,11 @@ function App() {
                 setShowAddBhajanToParody(false);
                 setParodyKeywords(['', '', '']);
                 setSearchTerm('');
+                alert(`✅ Parody "${selectedParody.name}" saved!\n\n🎶 ${selectedParody.bhajanIds.length} mukhdas ready to sing.`);
               }}
-              className="w-full mt-4 bg-gradient-to-r from-green-500 to-emerald-500 text-white px-4 py-2.5 rounded-lg font-semibold hover:shadow-lg text-sm"
+              className="w-full mt-4 bg-gradient-to-r from-green-500 to-emerald-500 text-white px-4 py-3 rounded-lg font-bold hover:shadow-lg text-base flex items-center justify-center gap-2"
             >
-              ✅ Done ({selectedParody.bhajanIds.length} mukhdas)
+              💾 Save Parody ({selectedParody.bhajanIds.length} mukhdas)
             </button>
           </div>
         </div>
@@ -3871,7 +3892,18 @@ service cloud.firestore {
 
             <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-4 sm:p-8">
               <div className="mb-6 sm:mb-8">
-                <h1 className="text-2xl sm:text-4xl font-bold text-amber-900 mb-4 break-words">{selectedBhajan.title}</h1>
+                <h1 className="text-2xl sm:text-4xl font-bold text-amber-900 mb-2 break-words">{selectedBhajan.title}</h1>
+                
+                {/* Dhun / Tune - shown prominently below title */}
+                {selectedBhajan.dhun && selectedBhajan.dhun.trim() && (
+                  <div className="mb-4 flex items-start gap-2 bg-gradient-to-r from-amber-50 to-orange-50 border-l-4 border-amber-400 px-3 py-2 rounded-r-lg">
+                    <span className="text-lg flex-shrink-0">🎼</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-amber-600 font-semibold uppercase tracking-wide">Dhun / Tune</p>
+                      <p className="text-sm sm:text-base text-amber-900 font-medium break-words">{selectedBhajan.dhun}</p>
+                    </div>
+                  </div>
+                )}
                 
                 <div className="flex flex-wrap gap-2 sm:gap-3 mb-4 sm:mb-6">
                   {selectedBhajan.deity && (
@@ -4160,7 +4192,8 @@ service cloud.firestore {
                   mood: '',
                   scale: '',
                   keywords: '',
-                  source: ''
+                  source: '',
+                  dhun: ''
                 });
               }}
               className="flex items-center text-orange-600 hover:text-orange-800 transition-colors mb-4 sm:mb-6 py-2 text-sm sm:text-base"
@@ -4447,6 +4480,25 @@ service cloud.firestore {
                         />
                         <p className="text-xs text-gray-500 mt-1">
                           💡 Paste a YouTube link, blog URL, or any web link to the bhajan
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-amber-800 mb-2">
+                          Dhun / Tune 🎼
+                        </label>
+                        <input
+                          type="text"
+                          value={editingBhajan ? (editingBhajan.dhun || '') : newBhajan.dhun}
+                          onChange={(e) => editingBhajan ?
+                            setEditingBhajan(prev => ({...prev, dhun: e.target.value})) :
+                            setNewBhajan(prev => ({...prev, dhun: e.target.value}))
+                          }
+                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
+                          placeholder="तर्ज़: तुझे देखा तो ये जाना सनम..."
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          🎵 Name of the tune/song this bhajan is set to (Bollywood, folk, traditional)
                         </p>
                       </div>
                     </div>
