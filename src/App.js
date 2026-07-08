@@ -3899,7 +3899,7 @@ service cloud.firestore {
                   <div className="mb-4 flex items-start gap-2 bg-gradient-to-r from-amber-50 to-orange-50 border-l-4 border-amber-400 px-3 py-2 rounded-r-lg">
                     <span className="text-lg flex-shrink-0">🎼</span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs text-amber-600 font-semibold uppercase tracking-wide">Dhun / Tune</p>
+                      <p className="text-xs text-amber-600 font-semibold uppercase tracking-wide">तर्ज़ / धुन</p>
                       <p className="text-sm sm:text-base text-amber-900 font-medium break-words">{selectedBhajan.dhun}</p>
                     </div>
                   </div>
@@ -3948,12 +3948,12 @@ service cloud.firestore {
                 {editingScale && (
                   <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                     <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
-                      <h3 className="text-lg font-bold text-amber-900 mb-4">🎵 Edit Scale/Raag</h3>
+                      <h3 className="text-lg font-bold text-amber-900 mb-4">🎵 Edit Scale</h3>
                       
                       <div className="space-y-4">
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Scale/Raag Name
+                            Scale Name
                           </label>
                           <input
                             type="text"
@@ -4377,7 +4377,26 @@ service cloud.firestore {
 
                       <div>
                         <label className="block text-sm font-semibold text-amber-800 mb-2">
-                          Scale/Raag 🎵
+                          तर्ज़ / धुन 🎼
+                        </label>
+                        <input
+                          type="text"
+                          value={editingBhajan ? (editingBhajan.dhun || '') : newBhajan.dhun}
+                          onChange={(e) => editingBhajan ?
+                            setEditingBhajan(prev => ({...prev, dhun: e.target.value})) :
+                            setNewBhajan(prev => ({...prev, dhun: e.target.value}))
+                          }
+                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
+                          placeholder="तर्ज़: तुझे देखा तो ये जाना सनम..."
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          🎵 Name of the tune/song this bhajan is set to (Bollywood, folk, traditional)
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-amber-800 mb-2">
+                          Scale 🎵
                         </label>
                         <input
                           type="text"
@@ -4480,25 +4499,6 @@ service cloud.firestore {
                         />
                         <p className="text-xs text-gray-500 mt-1">
                           💡 Paste a YouTube link, blog URL, or any web link to the bhajan
-                        </p>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-semibold text-amber-800 mb-2">
-                          Dhun / Tune 🎼
-                        </label>
-                        <input
-                          type="text"
-                          value={editingBhajan ? (editingBhajan.dhun || '') : newBhajan.dhun}
-                          onChange={(e) => editingBhajan ?
-                            setEditingBhajan(prev => ({...prev, dhun: e.target.value})) :
-                            setNewBhajan(prev => ({...prev, dhun: e.target.value}))
-                          }
-                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
-                          placeholder="तर्ज़: तुझे देखा तो ये जाना सनम..."
-                        />
-                        <p className="text-xs text-gray-500 mt-1">
-                          🎵 Name of the tune/song this bhajan is set to (Bollywood, folk, traditional)
                         </p>
                       </div>
                     </div>
