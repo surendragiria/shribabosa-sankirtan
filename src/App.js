@@ -139,6 +139,7 @@ function App() {
     localStorage.getItem('babosa-voice-lang') || 'hi-IN'
   );
   const [showScrollTop, setShowScrollTop] = useState(false);
+  const [showDeitiesIndex, setShowDeitiesIndex] = useState(false);
   const recognitionRef = useRef(null);
   const [showMenu, setShowMenu] = useState(false);
   const [activeView, setActiveView] = useState('home');
@@ -2103,6 +2104,26 @@ function App() {
                 <span className="font-semibold">Upload Bhajan</span>
               </button>
 
+              {/* Deity-wise Index Section */}
+              <div className="pt-4 border-t border-orange-200">
+                <h4 className="text-sm font-semibold text-amber-700 mb-3 px-4">🙏 Browse by Deity</h4>
+                <button
+                  onClick={() => {
+                    setShowDeitiesIndex(true);
+                    setShowMenu(false);
+                  }}
+                  className="w-full flex items-center p-3 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:shadow-lg transition-all"
+                >
+                  <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                  </svg>
+                  <span className="text-sm font-semibold flex-1 text-left">Deity-wise Index</span>
+                  <span className="bg-white/30 px-2 py-0.5 rounded-full text-xs font-bold">
+                    {new Set(bhajans.map(b => b.deity).filter(Boolean)).size}
+                  </span>
+                </button>
+              </div>
+
               {/* Programs (Playlists) Section */}
               <div className="pt-4 border-t border-orange-200">
                 <h4 className="text-sm font-semibold text-amber-700 mb-3 px-4">🎵 Programs</h4>
@@ -2615,6 +2636,187 @@ function App() {
             >
               ✅ Done ({selectedProgram.bhajanIds.length} bhajans)
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================ */}
+      {/* DEITY-WISE INDEX MODAL */}
+      {/* ============================================ */}
+      {showDeitiesIndex && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-3xl w-full my-4 max-h-[95vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4 sticky top-0 bg-white pb-3 border-b border-orange-100 z-10">
+              <div>
+                <h3 className="text-lg sm:text-xl font-bold text-amber-900">🙏 Deity-wise Index</h3>
+                <p className="text-xs text-amber-600 mt-1">Tap any deity to see their bhajans</p>
+              </div>
+              <button
+                onClick={() => setShowDeitiesIndex(false)}
+                className="p-2 hover:bg-gray-100 rounded-lg flex-shrink-0"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {(() => {
+              // Group bhajans by deity
+              const deityGroups = {};
+              const withoutDeity = [];
+              
+              bhajans.forEach(bhajan => {
+                if (bhajan.deity && bhajan.deity.trim()) {
+                  const deity = bhajan.deity.trim();
+                  if (!deityGroups[deity]) deityGroups[deity] = [];
+                  deityGroups[deity].push(bhajan);
+                } else {
+                  withoutDeity.push(bhajan);
+                }
+              });
+              
+              // Sort deities by number of bhajans (descending)
+              const sortedDeities = Object.keys(deityGroups).sort((a, b) => 
+                deityGroups[b].length - deityGroups[a].length
+              );
+              
+              // Emoji mapping for common deities
+              const deityEmojis = {
+                'krishna': '🪈', 'कृष्ण': '🪈', 'kanha': '🪈',
+                'ram': '🏹', 'राम': '🏹', 'rama': '🏹',
+                'shiv': '🔱', 'शिव': '🔱', 'shiva': '🔱', 'mahadev': '🔱',
+                'ganesh': '🐘', 'गणेश': '🐘', 'ganesha': '🐘', 'ganpati': '🐘',
+                'hanuman': '🐒', 'हनुमान': '🐒', 'balaji': '🐒',
+                'durga': '⚔️', 'दुर्गा': '⚔️', 'mata': '⚔️', 'maa': '⚔️',
+                'lakshmi': '🌸', 'लक्ष्मी': '🌸',
+                'saraswati': '🎼', 'सरस्वती': '🎼',
+                'vishnu': '🌀', 'विष्णु': '🌀',
+                'babosa': '🕉️', 'बाबोसा': '🕉️',
+                'shyam': '👑', 'श्याम': '👑', 'khatu': '👑',
+                'radhe': '🌺', 'राधा': '🌺', 'radha': '🌺',
+                'sai': '🙏', 'साई': '🙏',
+                'jagannath': '🛕', 'जगन्नाथ': '🛕',
+                'kali': '🗡️', 'काली': '🗡️',
+              };
+              
+              const getEmoji = (deity) => {
+                const key = deity.toLowerCase().trim();
+                for (const [k, emoji] of Object.entries(deityEmojis)) {
+                  if (key.includes(k)) return emoji;
+                }
+                return '🙏';
+              };
+              
+              if (sortedDeities.length === 0 && withoutDeity.length === 0) {
+                return (
+                  <div className="text-center py-12">
+                    <div className="text-6xl mb-4">🙏</div>
+                    <p className="text-amber-800 font-semibold">No bhajans yet</p>
+                    <p className="text-sm text-amber-600 mt-2">Add some bhajans to see them organized by deity</p>
+                  </div>
+                );
+              }
+              
+              return (
+                <div className="space-y-3">
+                  {sortedDeities.map(deity => {
+                    const deityBhajans = deityGroups[deity];
+                    return (
+                      <div
+                        key={deity}
+                        className="bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl border-2 border-orange-200 overflow-hidden"
+                      >
+                        <button
+                          onClick={() => {
+                            setFilterDeity(deity);
+                            setSearchTerm('');
+                            setShowDeitiesIndex(false);
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className="w-full p-4 flex items-center gap-3 hover:bg-orange-100 transition-colors"
+                        >
+                          <div className="text-3xl flex-shrink-0">{getEmoji(deity)}</div>
+                          <div className="flex-1 text-left min-w-0">
+                            <h4 className="font-bold text-amber-900 text-base sm:text-lg">{deity}</h4>
+                            <p className="text-xs text-amber-600">
+                              {deityBhajans.length} {deityBhajans.length === 1 ? 'bhajan' : 'bhajans'}
+                            </p>
+                          </div>
+                          <span className="bg-orange-500 text-white px-3 py-1 rounded-full text-sm font-bold flex-shrink-0">
+                            {deityBhajans.length}
+                          </span>
+                        </button>
+                        
+                        {/* Preview list - first 3 bhajan titles */}
+                        <div className="px-4 pb-3 space-y-1">
+                          {deityBhajans.slice(0, 3).map(bhajan => (
+                            <div
+                              key={bhajan.id}
+                              onClick={() => {
+                                setSelectedBhajan(bhajan);
+                                setShowDeitiesIndex(false);
+                              }}
+                              className="text-sm text-amber-800 hover:text-orange-600 cursor-pointer py-1 truncate flex items-center gap-1"
+                            >
+                              <span className="text-orange-400">•</span>
+                              <span className="truncate">{bhajan.title}</span>
+                            </div>
+                          ))}
+                          {deityBhajans.length > 3 && (
+                            <button
+                              onClick={() => {
+                                setFilterDeity(deity);
+                                setSearchTerm('');
+                                setShowDeitiesIndex(false);
+                                window.scrollTo({ top: 0, behavior: 'smooth' });
+                              }}
+                              className="text-xs text-orange-600 hover:text-orange-700 font-semibold mt-1"
+                            >
+                              View all {deityBhajans.length} bhajans →
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  
+                  {/* Bhajans without deity */}
+                  {withoutDeity.length > 0 && (
+                    <div className="bg-gray-50 rounded-xl border-2 border-gray-200 overflow-hidden">
+                      <button
+                        onClick={() => {
+                          setFilterDeity('');
+                          setSearchTerm('');
+                          setShowDeitiesIndex(false);
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className="w-full p-4 flex items-center gap-3 hover:bg-gray-100 transition-colors"
+                      >
+                        <div className="text-3xl flex-shrink-0">📝</div>
+                        <div className="flex-1 text-left">
+                          <h4 className="font-bold text-gray-700 text-base sm:text-lg">Uncategorized</h4>
+                          <p className="text-xs text-gray-500">
+                            {withoutDeity.length} bhajans without deity assigned
+                          </p>
+                        </div>
+                        <span className="bg-gray-500 text-white px-3 py-1 rounded-full text-sm font-bold flex-shrink-0">
+                          {withoutDeity.length}
+                        </span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+            
+            {/* Summary footer */}
+            <div className="mt-4 pt-4 border-t border-orange-100 text-center">
+              <p className="text-xs text-amber-600">
+                📊 <strong>{new Set(bhajans.map(b => b.deity).filter(Boolean)).size}</strong> deities • 
+                <strong> {bhajans.length}</strong> total bhajans
+              </p>
+            </div>
           </div>
         </div>
       )}
