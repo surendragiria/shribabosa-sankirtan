@@ -102,10 +102,19 @@ function App() {
   const [bhajans, setBhajans] = useState(getInitialBhajans);
   
   // Programs (Playlists) state - stored in localStorage
-  // Each program: { id, name, date, notes, bhajanIds: [array of bhajan ids in order], cloudId? }
+  // Each program: { id, name, date, notes, items: [{type:'bhajan'|'parody', id}], cloudId? }
   const [programs, setPrograms] = useState(() => {
     try {
       const saved = localStorage.getItem('babosa-programs');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  
+  // Parodies state - each parody = {id, name, bhajanIds: [ids in singing order], createdAt}
+  // When singing, only mukhdas of these bhajans are shown
+  const [parodies, setParodies] = useState(() => {
+    try {
+      const saved = localStorage.getItem('babosa-parodies');
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
@@ -123,6 +132,16 @@ function App() {
   const [newProgramName, setNewProgramName] = useState('');
   const [newProgramDate, setNewProgramDate] = useState('');
   const [newProgramNotes, setNewProgramNotes] = useState('');
+  
+  // Parody UI states
+  const [showParodiesList, setShowParodiesList] = useState(false);
+  const [showCreateParody, setShowCreateParody] = useState(false);
+  const [editingParody, setEditingParody] = useState(null);
+  const [selectedParody, setSelectedParody] = useState(null);
+  const [showAddBhajanToParody, setShowAddBhajanToParody] = useState(false);
+  const [newParodyName, setNewParodyName] = useState('');
+  // Track parody context when opening a bhajan (for "Back to Parody" button)
+  const [openedFromParody, setOpenedFromParody] = useState(null); // parody object or null
   
   const [showUpload, setShowUpload] = useState(false);
   const [selectedBhajan, setSelectedBhajan] = useState(null);
@@ -380,6 +399,159 @@ function App() {
   const exitProgramMode = () => {
     setProgramMode(null);
     setSelectedBhajan(null);
+  };
+
+  // =========================================
+  // PARODY MANAGEMENT FUNCTIONS
+  // =========================================
+  
+  // Extract Mukhda from bhajan lyrics
+  // The Mukhda is typically the first 2-4 lines that repeat as the refrain
+  const extractMukhda = (bhajan) => {
+    if (!bhajan || !bhajan.lyrics) return '';
+    // Take first non-empty lines up to first blank line, or first 4 lines
+    const lines = bhajan.lyrics.split('\n');
+    const mukhdaLines = [];
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed && mukhdaLines.length > 0) break; // blank line ends mukhda
+      if (trimmed) mukhdaLines.push(trimmed);
+      if (mukhdaLines.length >= 4) break;
+    }
+    return mukhdaLines.join('\n');
+  };
+  
+  // Save parodies to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('babosa-parodies', JSON.stringify(parodies));
+    } catch (error) {
+      console.error('Error saving parodies:', error);
+    }
+  }, [parodies]);
+  
+  // Create a new parody
+  const createParody = () => {
+    const newParody = {
+      id: Date.now(),
+      name: newParodyName.trim() || `पैरोडी ${parodies.length + 1}`,
+      bhajanIds: [],
+      createdAt: new Date().toISOString()
+    };
+    setParodies(prev => [newParody, ...prev]);
+    setSelectedParody(newParody);
+    setNewParodyName('');
+    setShowCreateParody(false);
+    setShowAddBhajanToParody(true); // Immediately let user add bhajans
+    alert(`✅ पैरोडी "${newParody.name}" created!\n\nNow select bhajans to add their mukhdas.`);
+  };
+  
+  // Update existing parody name
+  const updateParody = () => {
+    if (!editingParody) return;
+    const updated = { ...editingParody, name: newParodyName.trim() || editingParody.name };
+    setParodies(prev => prev.map(p => p.id === editingParody.id ? updated : p));
+    if (selectedParody && selectedParody.id === editingParody.id) {
+      setSelectedParody(updated);
+    }
+    setEditingParody(null);
+    setNewParodyName('');
+    setShowCreateParody(false);
+  };
+  
+  // Delete a parody
+  const deleteParody = (parodyId) => {
+    const parody = parodies.find(p => p.id === parodyId);
+    if (!parody) return;
+    if (!window.confirm(`Delete parody "${parody.name}"?\n\nThis will not delete the underlying bhajans.`)) return;
+    setParodies(prev => prev.filter(p => p.id !== parodyId));
+    if (selectedParody && selectedParody.id === parodyId) {
+      setSelectedParody(null);
+    }
+    // Also remove references from programs
+    setPrograms(prev => prev.map(p => ({
+      ...p,
+      items: (p.items || []).filter(item => !(item.type === 'parody' && item.id === parodyId))
+    })));
+  };
+  
+  // Start editing a parody name
+  const startEditParody = (parody) => {
+    setEditingParody(parody);
+    setNewParodyName(parody.name);
+    setShowCreateParody(true);
+  };
+  
+  // Add bhajan to parody
+  const addBhajanToParody = (bhajanId) => {
+    if (!selectedParody) return;
+    if (selectedParody.bhajanIds.includes(bhajanId)) {
+      alert('This bhajan is already in the parody');
+      return;
+    }
+    const updated = {
+      ...selectedParody,
+      bhajanIds: [...selectedParody.bhajanIds, bhajanId]
+    };
+    setParodies(prev => prev.map(p => p.id === selectedParody.id ? updated : p));
+    setSelectedParody(updated);
+  };
+  
+  // Remove bhajan from parody
+  const removeBhajanFromParody = (bhajanId) => {
+    if (!selectedParody) return;
+    const updated = {
+      ...selectedParody,
+      bhajanIds: selectedParody.bhajanIds.filter(id => id !== bhajanId)
+    };
+    setParodies(prev => prev.map(p => p.id === selectedParody.id ? updated : p));
+    setSelectedParody(updated);
+  };
+  
+  // Move bhajan up in parody order
+  const moveParodyBhajanUp = (index) => {
+    if (!selectedParody || index === 0) return;
+    const newIds = [...selectedParody.bhajanIds];
+    [newIds[index - 1], newIds[index]] = [newIds[index], newIds[index - 1]];
+    const updated = { ...selectedParody, bhajanIds: newIds };
+    setParodies(prev => prev.map(p => p.id === selectedParody.id ? updated : p));
+    setSelectedParody(updated);
+  };
+  
+  // Move bhajan down in parody order
+  const moveParodyBhajanDown = (index) => {
+    if (!selectedParody || index >= selectedParody.bhajanIds.length - 1) return;
+    const newIds = [...selectedParody.bhajanIds];
+    [newIds[index], newIds[index + 1]] = [newIds[index + 1], newIds[index]];
+    const updated = { ...selectedParody, bhajanIds: newIds };
+    setParodies(prev => prev.map(p => p.id === selectedParody.id ? updated : p));
+    setSelectedParody(updated);
+  };
+  
+  // Get bhajans for a parody (preserves order, filters missing)
+  const getParodyBhajans = (parody) => {
+    if (!parody) return [];
+    return parody.bhajanIds
+      .map(id => bhajans.find(b => b.id === id))
+      .filter(Boolean);
+  };
+  
+  // Open a bhajan from parody context (enables "Back to Parody" button)
+  const openBhajanFromParody = (bhajan, parody) => {
+    setOpenedFromParody(parody);
+    setSelectedParody(null);
+    setSelectedBhajan(bhajan);
+    trackView(bhajan.id);
+    window.history.pushState({ view: 'bhajan', id: bhajan.id, fromParody: parody.id }, '', window.location.pathname);
+  };
+  
+  // Return from bhajan back to parody view
+  const backToParody = () => {
+    if (openedFromParody) {
+      setSelectedParody(openedFromParody);
+      setSelectedBhajan(null);
+      setOpenedFromParody(null);
+    }
   };
 
 
@@ -1053,6 +1225,7 @@ function App() {
       document.body.scrollTop = 0;
     } catch (e) { /* ignore */ }
     
+    setOpenedFromParody(null); // Clear parody context on normal open
     setSelectedBhajan(bhajan);
     trackView(bhajan.id);
     
@@ -2104,9 +2277,9 @@ function App() {
                 <span className="font-semibold">Upload Bhajan</span>
               </button>
 
-              {/* Deity-wise Index Section */}
+              {/* Bhajan Index Section */}
               <div className="pt-4 border-t border-orange-200">
-                <h4 className="text-sm font-semibold text-amber-700 mb-3 px-4">🙏 Browse by Deity</h4>
+                <h4 className="text-sm font-semibold text-amber-700 mb-3 px-4">📚 Index</h4>
                 <button
                   onClick={() => {
                     setShowDeitiesIndex(true);
@@ -2117,9 +2290,9 @@ function App() {
                   <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
                   </svg>
-                  <span className="text-sm font-semibold flex-1 text-left">Deity-wise Index</span>
+                  <span className="text-sm font-semibold flex-1 text-left">Bhajan Index</span>
                   <span className="bg-white/30 px-2 py-0.5 rounded-full text-xs font-bold">
-                    {new Set(bhajans.map(b => b.deity).filter(Boolean)).size}
+                    {new Set(bhajans.map(b => b.deity).filter(Boolean)).size + (parodies.length > 0 ? 1 : 0)}
                   </span>
                 </button>
               </div>
@@ -2153,6 +2326,40 @@ function App() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                   </svg>
                   <span className="text-sm font-medium">Create New Program</span>
+                </button>
+              </div>
+
+              {/* Parodies (Mukhda Medleys) Section */}
+              <div className="pt-4 border-t border-orange-200">
+                <h4 className="text-sm font-semibold text-amber-700 mb-3 px-4">🎶 Parody (Mukhda Medley)</h4>
+                <button
+                  onClick={() => {
+                    setShowParodiesList(true);
+                    setShowMenu(false);
+                  }}
+                  className="w-full flex items-center p-3 rounded-lg bg-gradient-to-r from-pink-500 to-rose-500 text-white hover:shadow-lg transition-all mb-2"
+                >
+                  <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                  <span className="text-sm font-semibold flex-1 text-left">My Parodies</span>
+                  {parodies.length > 0 && (
+                    <span className="bg-white/30 px-2 py-0.5 rounded-full text-xs font-bold">{parodies.length}</span>
+                  )}
+                </button>
+                <button
+                  onClick={() => {
+                    setShowCreateParody(true);
+                    setNewParodyName('');
+                    setEditingParody(null);
+                    setShowMenu(false);
+                  }}
+                  className="w-full flex items-center p-3 rounded-lg hover:bg-orange-100 text-amber-800 transition-colors"
+                >
+                  <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                  <span className="text-sm font-medium">Create New Parody</span>
                 </button>
               </div>
 
@@ -2648,8 +2855,8 @@ function App() {
           <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-3xl w-full my-4 max-h-[95vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4 sticky top-0 bg-white pb-3 border-b border-orange-100 z-10">
               <div>
-                <h3 className="text-lg sm:text-xl font-bold text-amber-900">🙏 Deity-wise Index</h3>
-                <p className="text-xs text-amber-600 mt-1">Tap any deity to see their bhajans</p>
+                <h3 className="text-lg sm:text-xl font-bold text-amber-900">📚 Bhajan Index</h3>
+                <p className="text-xs text-amber-600 mt-1">Browse by deity or parody</p>
               </div>
               <button
                 onClick={() => setShowDeitiesIndex(false)}
@@ -2708,7 +2915,7 @@ function App() {
                 return '🙏';
               };
               
-              if (sortedDeities.length === 0 && withoutDeity.length === 0) {
+              if (sortedDeities.length === 0 && withoutDeity.length === 0 && parodies.length === 0) {
                 return (
                   <div className="text-center py-12">
                     <div className="text-6xl mb-4">🙏</div>
@@ -2720,6 +2927,71 @@ function App() {
               
               return (
                 <div className="space-y-3">
+                  {/* PARODIES - Separate top-level category (not linked to any deity) */}
+                  {parodies.length > 0 && (
+                    <>
+                      <div className="flex items-center gap-2 mt-1 mb-1">
+                        <span className="text-xs font-bold text-rose-700 uppercase tracking-wider">Parody Medleys</span>
+                        <div className="flex-1 h-px bg-rose-200"></div>
+                        <span className="text-xs text-rose-500">Cross-deity</span>
+                      </div>
+                      
+                      <div className="bg-gradient-to-br from-pink-50 to-rose-50 rounded-xl border-2 border-pink-300 overflow-hidden shadow-sm">
+                        <div className="p-4 bg-gradient-to-r from-pink-100 to-rose-100">
+                          <div className="flex items-center gap-3">
+                            <div className="text-4xl">🎶</div>
+                            <div className="flex-1">
+                              <h4 className="font-bold text-rose-900 text-base sm:text-lg">Parodies</h4>
+                              <p className="text-xs text-rose-600 italic">Mukhda medleys across deities</p>
+                            </div>
+                            <span className="bg-rose-500 text-white px-3 py-1 rounded-full text-sm font-bold flex-shrink-0">
+                              {parodies.length}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="px-3 py-2 space-y-1">
+                          {parodies.map(parody => {
+                            const parodyBhajans = getParodyBhajans(parody);
+                            // Get unique deities in this parody
+                            const uniqueDeities = [...new Set(parodyBhajans.map(b => b.deity).filter(Boolean))];
+                            return (
+                              <button
+                                key={parody.id}
+                                onClick={() => {
+                                  setShowDeitiesIndex(false);
+                                  setSelectedParody(parody);
+                                }}
+                                className="w-full text-left hover:bg-white/80 rounded-lg py-2 px-3 transition-colors group"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span className="text-rose-400">🎵</span>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="font-semibold text-rose-800 text-sm truncate">{parody.name}</div>
+                                    {uniqueDeities.length > 0 && (
+                                      <div className="text-xs text-rose-500 truncate mt-0.5">
+                                        {uniqueDeities.slice(0, 3).join(' · ')}
+                                        {uniqueDeities.length > 3 && ` +${uniqueDeities.length - 3}`}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <span className="text-xs text-rose-600 font-semibold whitespace-nowrap flex-shrink-0">
+                                    {parodyBhajans.length} मुखड़े
+                                  </span>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      
+                      {/* Divider between Parodies and Deities */}
+                      <div className="flex items-center gap-2 mt-4 mb-1">
+                        <span className="text-xs font-bold text-amber-700 uppercase tracking-wider">Deities</span>
+                        <div className="flex-1 h-px bg-amber-200"></div>
+                      </div>
+                    </>
+                  )}
+                  
                   {sortedDeities.map(deity => {
                     const deityBhajans = deityGroups[deity];
                     return (
@@ -2814,9 +3086,389 @@ function App() {
             <div className="mt-4 pt-4 border-t border-orange-100 text-center">
               <p className="text-xs text-amber-600">
                 📊 <strong>{new Set(bhajans.map(b => b.deity).filter(Boolean)).size}</strong> deities • 
-                <strong> {bhajans.length}</strong> total bhajans
+                <strong> {bhajans.length}</strong> bhajans
+                {parodies.length > 0 && (
+                  <> • <strong className="text-rose-600">{parodies.length}</strong> {parodies.length === 1 ? 'parody' : 'parodies'}</>
+                )}
               </p>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================ */}
+      {/* PARODIES LIST MODAL */}
+      {/* ============================================ */}
+      {showParodiesList && !selectedParody && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-2xl w-full my-4 max-h-[95vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg sm:text-xl font-bold text-amber-900">🎶 My Parodies</h3>
+                <p className="text-xs text-amber-600 mt-1">Medleys of mukhdas from multiple bhajans</p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setShowCreateParody(true);
+                    setNewParodyName('');
+                    setEditingParody(null);
+                  }}
+                  className="px-3 py-1.5 bg-gradient-to-r from-pink-500 to-rose-500 text-white rounded-lg text-sm font-semibold hover:shadow-md"
+                >
+                  + New
+                </button>
+                <button
+                  onClick={() => setShowParodiesList(false)}
+                  className="p-2 hover:bg-gray-100 rounded-lg"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {parodies.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="text-6xl mb-4">🎶</div>
+                <p className="text-amber-800 font-semibold mb-2">No parodies yet</p>
+                <p className="text-sm text-amber-600 mb-4">Create a parody to combine mukhdas from multiple bhajans into one energetic medley!</p>
+                <button
+                  onClick={() => {
+                    setShowCreateParody(true);
+                    setNewParodyName('');
+                    setEditingParody(null);
+                  }}
+                  className="px-4 py-2 bg-gradient-to-r from-pink-500 to-rose-500 text-white rounded-lg font-semibold hover:shadow-lg"
+                >
+                  Create First Parody
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {parodies.map(parody => {
+                  const parodyBhajans = getParodyBhajans(parody);
+                  return (
+                    <div
+                      key={parody.id}
+                      className="bg-gradient-to-br from-pink-50 to-rose-50 rounded-xl p-4 border-2 border-pink-200 hover:border-pink-400 transition-colors"
+                    >
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-bold text-rose-900 text-base sm:text-lg truncate">🎶 {parody.name}</h4>
+                          <p className="text-xs text-rose-600">
+                            {parodyBhajans.length} {parodyBhajans.length === 1 ? 'mukhda' : 'mukhdas'} in medley
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 mt-3 flex-wrap">
+                        <button
+                          onClick={() => setSelectedParody(parody)}
+                          className="flex-1 px-3 py-2 bg-pink-500 text-white rounded-lg text-sm font-semibold hover:bg-pink-600 transition-colors"
+                        >
+                          📋 View & Edit
+                        </button>
+                        <button
+                          onClick={() => startEditParody(parody)}
+                          className="px-3 py-2 bg-amber-100 text-amber-700 rounded-lg text-sm hover:bg-amber-200 transition-colors"
+                          title="Rename"
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          onClick={() => deleteParody(parody.id)}
+                          className="px-3 py-2 bg-red-100 text-red-600 rounded-lg text-sm hover:bg-red-200 transition-colors"
+                          title="Delete"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ============================================ */}
+      {/* PARODY DETAIL VIEW - Sing / View mukhdas */}
+      {/* ============================================ */}
+      {selectedParody && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-3xl w-full my-4 max-h-[95vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4 gap-2 sticky top-0 bg-white pb-2 z-10">
+              <button
+                onClick={() => setSelectedParody(null)}
+                className="p-2 hover:bg-orange-100 text-orange-600 rounded-lg flex-shrink-0"
+                title="Back to parodies"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-lg sm:text-xl font-bold text-rose-900 truncate">🎶 {selectedParody.name}</h3>
+                <p className="text-xs text-rose-600">{selectedParody.bhajanIds.filter(id => bhajans.find(b => b.id === id)).length} mukhdas</p>
+              </div>
+              <button
+                onClick={() => {
+                  setSelectedParody(null);
+                  setShowParodiesList(false);
+                }}
+                className="p-2 hover:bg-gray-100 rounded-lg flex-shrink-0"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Action button - Add mukhdas */}
+            <div className="mb-4">
+              <button
+                onClick={() => setShowAddBhajanToParody(true)}
+                className="w-full px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-lg font-semibold hover:shadow-lg transition-all text-sm"
+              >
+                + Add Bhajans (Mukhdas)
+              </button>
+            </div>
+
+            {/* Mukhdas list - each clickable to open full bhajan */}
+            {(() => {
+              const parodyBhajans = getParodyBhajans(selectedParody);
+              if (parodyBhajans.length === 0) {
+                return (
+                  <div className="text-center py-8 bg-gray-50 rounded-lg">
+                    <p className="text-gray-500 mb-3">No bhajans added yet</p>
+                    <button
+                      onClick={() => setShowAddBhajanToParody(true)}
+                      className="px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-semibold hover:bg-orange-600"
+                    >
+                      Add First Bhajan
+                    </button>
+                  </div>
+                );
+              }
+              return (
+                <div className="space-y-3">
+                  <p className="text-xs text-rose-700 text-center italic">
+                    💡 Tap any mukhda to open the full bhajan
+                  </p>
+                  {parodyBhajans.map((bhajan, index) => {
+                    const mukhda = extractMukhda(bhajan);
+                    return (
+                      <div
+                        key={bhajan.id}
+                        className="bg-gradient-to-br from-pink-50 to-rose-50 border-2 border-pink-200 rounded-xl overflow-hidden"
+                      >
+                        <div className="flex items-center gap-2 p-3 bg-white/50">
+                          <span className="bg-gradient-to-br from-pink-500 to-rose-500 text-white w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0">
+                            {index + 1}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <h5 className="font-semibold text-rose-900 truncate text-sm">{bhajan.title}</h5>
+                            {bhajan.deity && (
+                              <span className="text-xs text-rose-600">🙏 {bhajan.deity}</span>
+                            )}
+                          </div>
+                          <div className="flex flex-col gap-1 flex-shrink-0">
+                            <button
+                              onClick={() => moveParodyBhajanUp(index)}
+                              disabled={index === 0}
+                              className="p-1 text-rose-600 hover:bg-rose-100 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                              title="Move up"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 15l7-7 7 7" />
+                              </svg>
+                            </button>
+                            <button
+                              onClick={() => moveParodyBhajanDown(index)}
+                              disabled={index === parodyBhajans.length - 1}
+                              className="p-1 text-rose-600 hover:bg-rose-100 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                              title="Move down"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </button>
+                          </div>
+                          <button
+                            onClick={() => removeBhajanFromParody(bhajan.id)}
+                            className="p-2 text-red-500 hover:bg-red-50 rounded-lg flex-shrink-0"
+                            title="Remove"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                        {/* Clickable mukhda text */}
+                        <button
+                          onClick={() => openBhajanFromParody(bhajan, selectedParody)}
+                          className="w-full text-left p-4 hover:bg-white/70 transition-colors"
+                        >
+                          <pre className="text-sm sm:text-base text-amber-900 font-medium whitespace-pre-wrap leading-relaxed font-sans">
+                            {mukhda}
+                          </pre>
+                          <p className="text-xs text-rose-500 mt-2 font-semibold">Tap to open full bhajan →</p>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* ============================================ */}
+      {/* CREATE/EDIT PARODY MODAL */}
+      {/* ============================================ */}
+      {showCreateParody && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-md w-full my-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg sm:text-xl font-bold text-amber-900">
+                {editingParody ? '✏️ Rename Parody' : '🎶 Create New Parody'}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowCreateParody(false);
+                  setEditingParody(null);
+                  setNewParodyName('');
+                }}
+                className="p-2 hover:bg-gray-100 rounded-lg"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {!editingParody && (
+                <div className="bg-pink-50 p-3 rounded-lg border border-pink-200">
+                  <p className="text-sm text-rose-800">
+                    💡 A <strong>Parody</strong> is a medley of mukhdas from multiple bhajans — creating a unique, energetic singing experience.
+                  </p>
+                </div>
+              )}
+              
+              <div>
+                <label className="block text-sm font-semibold text-amber-800 mb-1">
+                  Parody Name (optional)
+                </label>
+                <input
+                  type="text"
+                  value={newParodyName}
+                  onChange={(e) => setNewParodyName(e.target.value)}
+                  className="w-full px-3 py-2 border-2 border-orange-200 rounded-lg focus:ring-2 focus:ring-orange-300"
+                  placeholder="e.g., बाबोसा पैरोडी 1 (or leave blank for default)"
+                  autoFocus
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Leave blank and it will be auto-named "पैरोडी {parodies.length + 1}"
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-2 mt-5">
+              <button
+                onClick={editingParody ? updateParody : createParody}
+                className="flex-1 bg-gradient-to-r from-pink-500 to-rose-500 text-white px-4 py-2.5 rounded-lg font-semibold hover:shadow-lg text-sm"
+              >
+                {editingParody ? '✅ Update' : '✅ Create & Add Bhajans'}
+              </button>
+              <button
+                onClick={() => {
+                  setShowCreateParody(false);
+                  setEditingParody(null);
+                  setNewParodyName('');
+                }}
+                className="px-4 py-2.5 bg-gray-200 text-gray-700 rounded-lg font-semibold hover:bg-gray-300 text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================ */}
+      {/* ADD BHAJAN TO PARODY - Select from collection */}
+      {/* ============================================ */}
+      {showAddBhajanToParody && selectedParody && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-2xl w-full my-4 max-h-[95vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg sm:text-xl font-bold text-amber-900">Add Bhajans to Parody</h3>
+                <p className="text-xs text-rose-600 mt-1">"{selectedParody.name}" • Only mukhdas will be used</p>
+              </div>
+              <button
+                onClick={() => setShowAddBhajanToParody(false)}
+                className="p-2 hover:bg-gray-100 rounded-lg flex-shrink-0"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full px-3 py-2 border-2 border-orange-200 rounded-lg focus:ring-2 focus:ring-orange-300 mb-3"
+              placeholder="🔍 खोजें / Search bhajans to add..."
+            />
+
+            <div className="text-xs text-rose-700 mb-2 font-semibold">
+              ✅ {selectedParody.bhajanIds.length} mukhdas selected
+            </div>
+
+            <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+              {filteredBhajans.map(bhajan => {
+                const isAdded = selectedParody.bhajanIds.includes(bhajan.id);
+                return (
+                  <div
+                    key={bhajan.id}
+                    onClick={() => isAdded ? removeBhajanFromParody(bhajan.id) : addBhajanToParody(bhajan.id)}
+                    className={`p-3 rounded-lg cursor-pointer transition-all border-2 ${
+                      isAdded
+                        ? 'bg-green-50 border-green-400'
+                        : 'bg-white border-orange-200 hover:border-orange-400'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${
+                        isAdded ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-400'
+                      }`}>
+                        {isAdded ? '✓' : '+'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h5 className="font-semibold text-amber-900 truncate text-sm">{bhajan.title}</h5>
+                        <p className="text-xs text-gray-600 line-clamp-1">
+                          मुखड़ा: {extractMukhda(bhajan).split('\n')[0]}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={() => setShowAddBhajanToParody(false)}
+              className="w-full mt-4 bg-gradient-to-r from-green-500 to-emerald-500 text-white px-4 py-2.5 rounded-lg font-semibold hover:shadow-lg text-sm"
+            >
+              ✅ Done ({selectedParody.bhajanIds.length} mukhdas)
+            </button>
           </div>
         </div>
       )}
@@ -2953,6 +3605,27 @@ service cloud.firestore {
           <div key={`bhajan-${selectedBhajan.id}`} style={{ minHeight: '100vh' }}>
             {/* Scroll anchor at very top */}
             <div id="bhajan-top-anchor" style={{ position: 'absolute', top: 0, height: 1, width: 1 }} />
+            
+            {/* Back to Parody Banner - shows when bhajan opened via parody */}
+            {openedFromParody && !programMode && (
+              <div className="mb-3 bg-gradient-to-r from-pink-500 to-rose-500 text-white rounded-xl shadow-lg p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs opacity-90">🎶 From Parody</p>
+                    <p className="font-bold text-sm truncate">{openedFromParody.name}</p>
+                  </div>
+                  <button
+                    onClick={backToParody}
+                    className="px-3 py-2 bg-white/20 hover:bg-white/30 rounded-lg font-semibold text-sm transition-all flex items-center gap-1 flex-shrink-0"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
+                    </svg>
+                    Back to Parody
+                  </button>
+                </div>
+              </div>
+            )}
             
             {/* Program Mode Banner - shows when in live program mode */}
             {programMode && (() => {
