@@ -1219,8 +1219,14 @@ function App() {
   };
 
   // Open bhajan with scroll-to-top AND push browser history state
+  // Also saves current scroll position for restoration on back
   const openBhajan = (bhajan) => {
     console.log('🎵 Opening bhajan:', bhajan.title, 'ID:', bhajan.id);
+    
+    // Save current scroll position of home page so we can restore it on back
+    const currentScroll = window.pageYOffset || document.documentElement.scrollTop || 0;
+    savedHomeScrollRef.current = currentScroll;
+    console.log('💾 Saved home scroll position:', currentScroll);
     
     // Force scroll to absolute top BEFORE state change
     try {
@@ -1237,7 +1243,36 @@ function App() {
     window.history.pushState({ view: 'bhajan', id: bhajan.id }, '', window.location.pathname);
   };
 
-  // Robust scroll-to-top when selectedBhajan changes
+  // Ref to store saved scroll position (survives re-renders without triggering them)
+  const savedHomeScrollRef = useRef(0);
+  
+  // Restore scroll position when returning to home from a bhajan
+  useLayoutEffect(() => {
+    // When selectedBhajan becomes null (we went back to home)
+    if (!selectedBhajan && savedHomeScrollRef.current > 0) {
+      const restoreScroll = () => {
+        const target = savedHomeScrollRef.current;
+        console.log('📍 Restoring home scroll position:', target);
+        window.scrollTo({ top: target, left: 0, behavior: 'instant' });
+        document.documentElement.scrollTop = target;
+        document.body.scrollTop = target;
+      };
+      
+      // Try multiple times to catch any layout shifts
+      restoreScroll();
+      requestAnimationFrame(() => {
+        restoreScroll();
+        setTimeout(restoreScroll, 100);
+      });
+      
+      // Clear after restoring so we don't re-restore
+      setTimeout(() => {
+        savedHomeScrollRef.current = 0;
+      }, 300);
+    }
+  }, [selectedBhajan]);
+
+  // Robust scroll-to-top when selectedBhajan changes to a bhajan
   // Uses useLayoutEffect to run SYNCHRONOUSLY before browser paint
   useLayoutEffect(() => {
     if (!selectedBhajan) return;
@@ -4347,32 +4382,53 @@ service cloud.firestore {
                         <label className="block text-sm font-semibold text-amber-800 mb-2">
                           Deity 🙏
                         </label>
-                        <input
-                          type="text"
+                        <select
                           value={editingBhajan ? editingBhajan.deity : newBhajan.deity}
                           onChange={(e) => editingBhajan ?
                             setEditingBhajan(prev => ({...prev, deity: e.target.value})) :
                             setNewBhajan(prev => ({...prev, deity: e.target.value}))
                           }
-                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
-                          placeholder="Krishna, Rama, Shiva, etc."
-                        />
+                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400 bg-white"
+                        >
+                          <option value="">Select Deity...</option>
+                          <option value="Babosa">Babosa</option>
+                          <option value="Krishna">Krishna</option>
+                          <option value="Mata Ji">Mata Ji</option>
+                          <option value="Hanuman">Hanuman</option>
+                          <option value="Rama">Rama</option>
+                          <option value="Shiv">Shiv</option>
+                          <option value="Ramdev">Ramdev</option>
+                          <option value="Ganesh">Ganesh</option>
+                          <option value="Bhairav">Bhairav</option>
+                          <option value="Deshbhakti">Deshbhakti</option>
+                          <option value="Others">Others</option>
+                        </select>
                       </div>
 
                       <div>
                         <label className="block text-sm font-semibold text-amber-800 mb-2">
                           Category 📖
                         </label>
-                        <input
-                          type="text"
+                        <select
                           value={editingBhajan ? editingBhajan.category : newBhajan.category}
                           onChange={(e) => editingBhajan ?
                             setEditingBhajan(prev => ({...prev, category: e.target.value})) :
                             setNewBhajan(prev => ({...prev, category: e.target.value}))
                           }
-                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
-                          placeholder="Aarti, Bhajan, Mantra, etc."
-                        />
+                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400 bg-white"
+                        >
+                          <option value="">Select Category...</option>
+                          <option value="Bhajan">Bhajan</option>
+                          <option value="Arti">Arti</option>
+                          <option value="Parody">Parody</option>
+                          <option value="Quwali">Quwali</option>
+                          <option value="Folk Song">Folk Song</option>
+                          <option value="Katha">Katha</option>
+                          <option value="Dohe">Dohe</option>
+                          <option value="Stotra">Stotra</option>
+                          <option value="Mantra">Mantra</option>
+                          <option value="Chalisa">Chalisa</option>
+                        </select>
                       </div>
 
                       <div>
@@ -4471,6 +4527,54 @@ service cloud.firestore {
                         <label className="block text-sm font-semibold text-amber-800 mb-2">
                           Keywords 🏷️
                         </label>
+                        
+                        {/* Tappable Quick Keywords Chips */}
+                        <div className="mb-2 bg-orange-50 rounded-lg p-2 border border-orange-200">
+                          <p className="text-xs text-amber-700 mb-2 font-medium">💡 Tap to add:</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {['bhawna', 'dance', 'marwari', 'dhamal', 'fast', 'sad', 'celebration', 'punjabi', 'melody', 'mela', 'birthday', 'gujarati', 'filmy', 'folk', 'traditional', 'peaceful'].map(kw => {
+                              const currentKeywords = (editingBhajan ? editingBhajan.keywords : newBhajan.keywords) || '';
+                              const kwList = currentKeywords.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+                              const isSelected = kwList.includes(kw.toLowerCase());
+                              return (
+                                <button
+                                  key={kw}
+                                  type="button"
+                                  onClick={() => {
+                                    if (isSelected) {
+                                      // Remove keyword
+                                      const newList = kwList.filter(k => k !== kw.toLowerCase());
+                                      const newValue = newList.join(', ');
+                                      if (editingBhajan) {
+                                        setEditingBhajan(prev => ({...prev, keywords: newValue}));
+                                      } else {
+                                        setNewBhajan(prev => ({...prev, keywords: newValue}));
+                                      }
+                                    } else {
+                                      // Add keyword
+                                      const newValue = currentKeywords.trim() 
+                                        ? currentKeywords.trim().replace(/,\s*$/, '') + ', ' + kw
+                                        : kw;
+                                      if (editingBhajan) {
+                                        setEditingBhajan(prev => ({...prev, keywords: newValue}));
+                                      } else {
+                                        setNewBhajan(prev => ({...prev, keywords: newValue}));
+                                      }
+                                    }
+                                  }}
+                                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all ${
+                                    isSelected
+                                      ? 'bg-orange-500 text-white shadow-md scale-105'
+                                      : 'bg-white text-amber-800 border border-orange-300 hover:bg-orange-100 hover:border-orange-400'
+                                  }`}
+                                >
+                                  {isSelected ? '✓ ' : '+ '}{kw}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        
                         <input
                           type="text"
                           value={editingBhajan ? editingBhajan.keywords : newBhajan.keywords}
@@ -4479,8 +4583,11 @@ service cloud.firestore {
                             setNewBhajan(prev => ({...prev, keywords: e.target.value}))
                           }
                           className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400"
-                          placeholder="devotion, prayer, peace..."
+                          placeholder="Or type custom keywords separated by commas..."
                         />
+                        <p className="text-xs text-gray-500 mt-1">
+                          💡 Tap chips above OR type custom keywords like: babosa, khatu, opening
+                        </p>
                       </div>
 
                       <div>
