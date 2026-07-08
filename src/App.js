@@ -138,6 +138,7 @@ function App() {
   const [voiceLang, setVoiceLang] = useState(() => 
     localStorage.getItem('babosa-voice-lang') || 'hi-IN'
   );
+  const [showScrollTop, setShowScrollTop] = useState(false);
   const recognitionRef = useRef(null);
   const [showMenu, setShowMenu] = useState(false);
   const [activeView, setActiveView] = useState('home');
@@ -549,17 +550,6 @@ function App() {
     
     // Explicitly use UTF-8 encoding for proper Devanagari/Hindi support
     reader.readAsText(file, 'UTF-8');
-  };
-
-  // Clear all data (with confirmation)
-  const clearAllData = () => {
-    if (window.confirm(`Are you sure you want to delete ALL ${bhajans.length} bhajans? This cannot be undone.\n\nWe recommend exporting a backup first.`)) {
-      if (window.confirm('This is your FINAL WARNING. All bhajans will be permanently deleted.')) {
-        localStorage.removeItem('babosa-sankirtan-bhajans');
-        setBhajans(getInitialBhajans().slice(0, 4));
-        alert('All uploaded bhajans have been deleted. Default bhajans restored.');
-      }
-    }
   };
 
   // Load Tesseract.js dynamically when needed - FIX FOR OCR
@@ -1132,6 +1122,31 @@ function App() {
     };
   }, []);
 
+  // Show/hide Back to Top button based on scroll position
+  useEffect(() => {
+    const handleScroll = () => {
+      // Show button when scrolled more than 400px
+      const scrolled = window.pageYOffset || document.documentElement.scrollTop || 0;
+      setShowScrollTop(scrolled > 400);
+    };
+    
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    handleScroll(); // Check initial position
+    
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Smoothly scroll back to top
+  const scrollToTop = () => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+    // Fallback for browsers without smooth scroll support
+    setTimeout(() => {
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    }, 300);
+  };
+
   // ==========================================
   // FIREBASE CLOUD SYNC
   // ==========================================
@@ -1513,62 +1528,79 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Voice search functionality - improved with better language support
+  // Voice search functionality - highly responsive with improved Hindi support
   useEffect(() => {
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
       setVoiceSearchSupported(true);
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       const recognition = new SpeechRecognition();
       
-      recognition.continuous = true;       // Keep listening until manually stopped
-      recognition.interimResults = true;   // Get results AS user speaks (real-time)
+      // Maximum responsiveness settings
+      recognition.continuous = true;       // Keep listening
+      recognition.interimResults = true;   // Show results word-by-word as user speaks
       recognition.lang = voiceLang;
-      recognition.maxAlternatives = 1;
+      recognition.maxAlternatives = 3;     // Get top 3 alternatives for better Hindi accuracy
       
       recognition.onresult = (event) => {
-        // Build transcript from all results so far (final + interim)
+        // Collect ALL final results (accumulated) + latest interim
         let finalTranscript = '';
         let interimTranscript = '';
         
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            finalTranscript += transcript;
+        for (let i = 0; i < event.results.length; i++) {
+          const result = event.results[i];
+          const bestTranscript = result[0].transcript;
+          
+          if (result.isFinal) {
+            finalTranscript += bestTranscript + ' ';
           } else {
-            interimTranscript += transcript;
+            // For interim, use whatever is longest (usually more complete)
+            interimTranscript += bestTranscript;
           }
         }
         
-        // Combine final + interim for live display
+        // Update search box immediately with combined transcript
         const liveText = (finalTranscript + interimTranscript).trim();
         if (liveText) {
-          console.log('Voice (' + voiceLang + '):', liveText, '[final:', !!finalTranscript, ']');
+          console.log('🎤 ' + voiceLang + ':', liveText);
           setSearchTerm(liveText);
         }
       };
       
       recognition.onerror = (event) => {
         console.error('Voice search error:', event.error);
+        
+        // Don't show error for these - they're normal
+        if (event.error === 'no-speech' || event.error === 'aborted') {
+          setVoiceSearchActive(false);
+          return;
+        }
+        
         setVoiceSearchActive(false);
         
-        // Don't show error for 'no-speech' or 'aborted' (normal interruptions)
-        if (event.error === 'no-speech' || event.error === 'aborted') return;
-        
         if (event.error === 'not-allowed' || event.error === 'permission-denied') {
-          alert('🎤 Microphone permission denied. Please allow microphone access in your browser settings and try again.');
+          alert('🎤 Microphone permission denied.\n\nOn iPhone: Settings → Chrome → Microphone → Allow\n\nThen try again.');
         } else if (event.error === 'network') {
-          alert('🎤 Network error. Voice search requires an internet connection.');
+          alert('🎤 Network error. Voice search needs internet.');
         } else if (event.error === 'audio-capture') {
-          alert('🎤 No microphone found. Please check your microphone and try again.');
+          alert('🎤 No microphone found.');
         } else if (event.error === 'language-not-supported') {
           alert(`🎤 ${voiceLang === 'hi-IN' ? 'हिंदी' : 'English'} voice search is not supported on this device. Try switching language.`);
         } else {
-          alert(`🎤 Voice search failed: ${event.error}. Please try again.`);
+          console.log('Voice error (silent):', event.error);
         }
       };
       
       recognition.onend = () => {
         setVoiceSearchActive(false);
+        console.log('🎤 Voice recognition ended');
+      };
+      
+      recognition.onspeechstart = () => {
+        console.log('🎤 Speech detected');
+      };
+      
+      recognition.onspeechend = () => {
+        console.log('🎤 Speech ended');
       };
       
       recognitionRef.current = recognition;
@@ -2191,16 +2223,6 @@ function App() {
                     className="hidden"
                   />
                 </label>
-
-                <button
-                  onClick={clearAllData}
-                  className="w-full flex items-center p-3 rounded-lg hover:bg-red-100 text-red-600 transition-colors"
-                >
-                  <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                  <span className="text-sm font-medium">Clear All Data</span>
-                </button>
               </div>
             </div>
           </div>
@@ -3585,6 +3607,23 @@ service cloud.firestore {
           </div>
         )}
       </div>
+
+      {/* Floating Back to Top button - only shows when scrolled down */}
+      {showScrollTop && !selectedBhajan && (
+        <button
+          onClick={scrollToTop}
+          className="fixed bottom-6 right-6 z-40 bg-gradient-to-br from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white w-12 h-12 sm:w-14 sm:h-14 rounded-full shadow-2xl hover:shadow-orange-500/50 transition-all duration-300 flex items-center justify-center animate-fade-in"
+          title="Back to top"
+          aria-label="Scroll to top"
+          style={{
+            animation: 'fadeIn 0.3s ease-in'
+          }}
+        >
+          <svg className="w-6 h-6 sm:w-7 sm:h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }
