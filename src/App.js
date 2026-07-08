@@ -140,6 +140,8 @@ function App() {
   const [selectedParody, setSelectedParody] = useState(null);
   const [showAddBhajanToParody, setShowAddBhajanToParody] = useState(false);
   const [newParodyName, setNewParodyName] = useState('');
+  // Parody keywords for smart filtering when adding bhajans (up to 3)
+  const [parodyKeywords, setParodyKeywords] = useState(['', '', '']);
   // Track parody context when opening a bhajan (for "Back to Parody" button)
   const [openedFromParody, setOpenedFromParody] = useState(null); // parody object or null
   
@@ -3400,7 +3402,7 @@ function App() {
       )}
 
       {/* ============================================ */}
-      {/* ADD BHAJAN TO PARODY - Select from collection */}
+      {/* ADD BHAJAN TO PARODY - Select from collection with keyword filters */}
       {/* ============================================ */}
       {showAddBhajanToParody && selectedParody && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center p-3 overflow-y-auto">
@@ -3411,7 +3413,11 @@ function App() {
                 <p className="text-xs text-rose-600 mt-1">"{selectedParody.name}" • Only mukhdas will be used</p>
               </div>
               <button
-                onClick={() => setShowAddBhajanToParody(false)}
+                onClick={() => {
+                  setShowAddBhajanToParody(false);
+                  setParodyKeywords(['', '', '']);
+                  setSearchTerm('');
+                }}
                 className="p-2 hover:bg-gray-100 rounded-lg flex-shrink-0"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -3420,51 +3426,200 @@ function App() {
               </button>
             </div>
 
+            {/* Keyword filters - up to 3 */}
+            <div className="mb-3 bg-pink-50 border-2 border-pink-200 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-xs font-bold text-rose-700">
+                  🎯 Quick Keyword Filters (up to 3)
+                </label>
+                {parodyKeywords.some(k => k.trim()) && (
+                  <button
+                    onClick={() => setParodyKeywords(['', '', ''])}
+                    className="text-xs text-rose-600 hover:text-rose-800 underline"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {[0, 1, 2].map(i => (
+                  <input
+                    key={i}
+                    type="text"
+                    value={parodyKeywords[i]}
+                    onChange={(e) => {
+                      const newKeywords = [...parodyKeywords];
+                      newKeywords[i] = e.target.value;
+                      setParodyKeywords(newKeywords);
+                    }}
+                    className="px-2 py-1.5 border border-pink-300 rounded text-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400"
+                    placeholder={`Keyword ${i + 1}`}
+                  />
+                ))}
+              </div>
+              <p className="text-xs text-rose-600 mt-2 italic">
+                💡 Matching bhajans appear at top. Others below for easy access.
+              </p>
+            </div>
+
+            {/* Regular search - for finding specific bhajan outside keywords */}
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full px-3 py-2 border-2 border-orange-200 rounded-lg focus:ring-2 focus:ring-orange-300 mb-3"
-              placeholder="🔍 खोजें / Search bhajans to add..."
+              placeholder="🔍 Or search for a specific bhajan..."
             />
 
-            <div className="text-xs text-rose-700 mb-2 font-semibold">
-              ✅ {selectedParody.bhajanIds.length} mukhdas selected
+            <div className="text-xs text-rose-700 mb-2 font-semibold flex items-center gap-2">
+              <span>✅ {selectedParody.bhajanIds.length} mukhdas selected</span>
             </div>
 
-            <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-              {filteredBhajans.map(bhajan => {
-                const isAdded = selectedParody.bhajanIds.includes(bhajan.id);
-                return (
-                  <div
-                    key={bhajan.id}
-                    onClick={() => isAdded ? removeBhajanFromParody(bhajan.id) : addBhajanToParody(bhajan.id)}
-                    className={`p-3 rounded-lg cursor-pointer transition-all border-2 ${
-                      isAdded
-                        ? 'bg-green-50 border-green-400'
-                        : 'bg-white border-orange-200 hover:border-orange-400'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${
-                        isAdded ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-400'
-                      }`}>
-                        {isAdded ? '✓' : '+'}
+            {(() => {
+              // Sort bhajans: matching keywords first, others after
+              const activeKeywords = parodyKeywords.map(k => k.trim().toLowerCase()).filter(Boolean);
+              const searchVariants = getSearchVariants(searchTerm);
+              
+              // First filter by search (if any)
+              let candidates = bhajans;
+              if (searchTerm) {
+                candidates = bhajans.filter(bhajan => {
+                  const text = buildBhajanSearchIndex(bhajan);
+                  return searchVariants.some(v => text.includes(v));
+                });
+              }
+              
+              // Score each bhajan based on keyword matches
+              const scored = candidates.map(bhajan => {
+                let score = 0;
+                if (activeKeywords.length > 0) {
+                  const text = buildBhajanSearchIndex(bhajan);
+                  activeKeywords.forEach(kw => {
+                    // Also apply bilingual to keywords
+                    const kwVariants = getSearchVariants(kw);
+                    if (kwVariants.some(v => text.includes(v))) {
+                      score++;
+                    }
+                  });
+                }
+                return { bhajan, score };
+              });
+              
+              // Sort: highest score first, then by title
+              scored.sort((a, b) => {
+                if (b.score !== a.score) return b.score - a.score;
+                return (a.bhajan.title || '').localeCompare(b.bhajan.title || '');
+              });
+              
+              const matched = scored.filter(s => s.score > 0);
+              const unmatched = scored.filter(s => s.score === 0);
+              
+              return (
+                <div className="max-h-[55vh] overflow-y-auto space-y-2">
+                  {/* Matched section - only show if there are keywords AND matches */}
+                  {activeKeywords.length > 0 && matched.length > 0 && (
+                    <>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-xs font-bold text-green-700 bg-green-100 px-2 py-1 rounded-full">
+                          🎯 {matched.length} Matching
+                        </span>
+                        <div className="flex-1 h-px bg-green-200"></div>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <h5 className="font-semibold text-amber-900 truncate text-sm">{bhajan.title}</h5>
-                        <p className="text-xs text-gray-600 line-clamp-1">
-                          मुखड़ा: {extractMukhda(bhajan).split('\n')[0]}
-                        </p>
-                      </div>
+                      {matched.map(({ bhajan, score }) => {
+                        const isAdded = selectedParody.bhajanIds.includes(bhajan.id);
+                        return (
+                          <div
+                            key={bhajan.id}
+                            onClick={() => isAdded ? removeBhajanFromParody(bhajan.id) : addBhajanToParody(bhajan.id)}
+                            className={`p-3 rounded-lg cursor-pointer transition-all border-2 ${
+                              isAdded
+                                ? 'bg-green-50 border-green-400'
+                                : 'bg-green-50/50 border-green-200 hover:border-green-400'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${
+                                isAdded ? 'bg-green-500 text-white' : 'bg-green-200 text-green-700'
+                              }`}>
+                                {isAdded ? '✓' : '+'}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1">
+                                  <h5 className="font-semibold text-amber-900 truncate text-sm">{bhajan.title}</h5>
+                                  {score > 1 && (
+                                    <span className="bg-green-500 text-white text-xs px-1.5 py-0.5 rounded-full flex-shrink-0" title={`Matches ${score} keywords`}>
+                                      {score}★
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-gray-600 line-clamp-1">
+                                  मुखड़ा: {extractMukhda(bhajan).split('\n')[0]}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </>
+                  )}
+                  
+                  {/* Unmatched section */}
+                  {unmatched.length > 0 && (
+                    <>
+                      {activeKeywords.length > 0 && matched.length > 0 && (
+                        <div className="flex items-center gap-2 mt-4">
+                          <span className="text-xs font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+                            📚 Other bhajans ({unmatched.length})
+                          </span>
+                          <div className="flex-1 h-px bg-gray-200"></div>
+                        </div>
+                      )}
+                      {unmatched.map(({ bhajan }) => {
+                        const isAdded = selectedParody.bhajanIds.includes(bhajan.id);
+                        return (
+                          <div
+                            key={bhajan.id}
+                            onClick={() => isAdded ? removeBhajanFromParody(bhajan.id) : addBhajanToParody(bhajan.id)}
+                            className={`p-3 rounded-lg cursor-pointer transition-all border-2 ${
+                              isAdded
+                                ? 'bg-green-50 border-green-400'
+                                : 'bg-white border-orange-200 hover:border-orange-400'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${
+                                isAdded ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-400'
+                              }`}>
+                                {isAdded ? '✓' : '+'}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <h5 className="font-semibold text-amber-900 truncate text-sm">{bhajan.title}</h5>
+                                <p className="text-xs text-gray-600 line-clamp-1">
+                                  मुखड़ा: {extractMukhda(bhajan).split('\n')[0]}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </>
+                  )}
+                  
+                  {scored.length === 0 && (
+                    <div className="text-center py-8 text-gray-500">
+                      No bhajans found. Try different keywords or search.
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  )}
+                </div>
+              );
+            })()}
 
             <button
-              onClick={() => setShowAddBhajanToParody(false)}
+              onClick={() => {
+                setShowAddBhajanToParody(false);
+                setParodyKeywords(['', '', '']);
+                setSearchTerm('');
+              }}
               className="w-full mt-4 bg-gradient-to-r from-green-500 to-emerald-500 text-white px-4 py-2.5 rounded-lg font-semibold hover:shadow-lg text-sm"
             >
               ✅ Done ({selectedParody.bhajanIds.length} mukhdas)
