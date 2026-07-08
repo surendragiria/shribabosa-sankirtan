@@ -4528,50 +4528,79 @@ service cloud.firestore {
                           Keywords 🏷️
                         </label>
                         
-                        {/* Tappable Quick Keywords Chips */}
+                        {/* Tappable Quick Keywords Chips - Default + Auto-collected from collection */}
                         <div className="mb-2 bg-orange-50 rounded-lg p-2 border border-orange-200">
                           <p className="text-xs text-amber-700 mb-2 font-medium">💡 Tap to add:</p>
                           <div className="flex flex-wrap gap-1.5">
-                            {['bhawna', 'dance', 'marwari', 'dhamal', 'fast', 'sad', 'celebration', 'punjabi', 'melody', 'mela', 'birthday', 'gujarati', 'filmy', 'folk', 'traditional', 'peaceful'].map(kw => {
-                              const currentKeywords = (editingBhajan ? editingBhajan.keywords : newBhajan.keywords) || '';
-                              const kwList = currentKeywords.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
-                              const isSelected = kwList.includes(kw.toLowerCase());
-                              return (
-                                <button
-                                  key={kw}
-                                  type="button"
-                                  onClick={() => {
-                                    if (isSelected) {
-                                      // Remove keyword
-                                      const newList = kwList.filter(k => k !== kw.toLowerCase());
-                                      const newValue = newList.join(', ');
-                                      if (editingBhajan) {
-                                        setEditingBhajan(prev => ({...prev, keywords: newValue}));
-                                      } else {
-                                        setNewBhajan(prev => ({...prev, keywords: newValue}));
-                                      }
-                                    } else {
-                                      // Add keyword
-                                      const newValue = currentKeywords.trim() 
-                                        ? currentKeywords.trim().replace(/,\s*$/, '') + ', ' + kw
-                                        : kw;
-                                      if (editingBhajan) {
-                                        setEditingBhajan(prev => ({...prev, keywords: newValue}));
-                                      } else {
-                                        setNewBhajan(prev => ({...prev, keywords: newValue}));
-                                      }
+                            {(() => {
+                              // Default seed keywords (always shown)
+                              const defaultKeywords = ['bhawna', 'dance', 'marwari', 'dhamal', 'fast', 'sad', 'celebration', 'punjabi', 'melody', 'mela', 'birthday', 'gujarati', 'filmy', 'folk', 'traditional', 'peaceful'];
+                              
+                              // Auto-collect all keywords used across all bhajans
+                              const collectedKeywords = new Set();
+                              bhajans.forEach(b => {
+                                if (b.keywords) {
+                                  b.keywords.split(',').forEach(kw => {
+                                    const cleaned = kw.trim().toLowerCase();
+                                    // Filter: skip too short/long, numeric, or empty
+                                    if (cleaned.length >= 2 && cleaned.length <= 25 && !/^\d+$/.test(cleaned)) {
+                                      collectedKeywords.add(cleaned);
                                     }
-                                  }}
-                                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all ${
-                                    isSelected
-                                      ? 'bg-orange-500 text-white shadow-md scale-105'
-                                      : 'bg-white text-amber-800 border border-orange-300 hover:bg-orange-100 hover:border-orange-400'
-                                  }`}
-                                >
-                                  {isSelected ? '✓ ' : '+ '}{kw}
-                                </button>
-                              );
-                            })}
+                                  });
+                                }
+                              });
+                              
+                              // Merge: defaults first (in order), then any NEW collected keywords
+                              const defaultSet = new Set(defaultKeywords.map(k => k.toLowerCase()));
+                              const extras = [...collectedKeywords]
+                                .filter(k => !defaultSet.has(k))
+                                .sort(); // Alphabetize the extras
+                              
+                              const allChips = [...defaultKeywords, ...extras];
+                              
+                              return allChips.map(kw => {
+                                const currentKeywords = (editingBhajan ? editingBhajan.keywords : newBhajan.keywords) || '';
+                                const kwList = currentKeywords.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+                                const isSelected = kwList.includes(kw.toLowerCase());
+                                const isDefault = defaultSet.has(kw.toLowerCase());
+                                return (
+                                  <button
+                                    key={kw}
+                                    type="button"
+                                    onClick={() => {
+                                      if (isSelected) {
+                                        const newList = kwList.filter(k => k !== kw.toLowerCase());
+                                        const newValue = newList.join(', ');
+                                        if (editingBhajan) {
+                                          setEditingBhajan(prev => ({...prev, keywords: newValue}));
+                                        } else {
+                                          setNewBhajan(prev => ({...prev, keywords: newValue}));
+                                        }
+                                      } else {
+                                        const newValue = currentKeywords.trim() 
+                                          ? currentKeywords.trim().replace(/,\s*$/, '') + ', ' + kw
+                                          : kw;
+                                        if (editingBhajan) {
+                                          setEditingBhajan(prev => ({...prev, keywords: newValue}));
+                                        } else {
+                                          setNewBhajan(prev => ({...prev, keywords: newValue}));
+                                        }
+                                      }
+                                    }}
+                                    className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all ${
+                                      isSelected
+                                        ? 'bg-orange-500 text-white shadow-md scale-105'
+                                        : isDefault
+                                          ? 'bg-white text-amber-800 border border-orange-300 hover:bg-orange-100 hover:border-orange-400'
+                                          : 'bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 hover:border-amber-400 italic'
+                                    }`}
+                                    title={isDefault ? 'Default keyword' : 'Custom keyword from your collection'}
+                                  >
+                                    {isSelected ? '✓ ' : '+ '}{kw}
+                                  </button>
+                                );
+                              });
+                            })()}
                           </div>
                         </div>
                         
@@ -4586,7 +4615,7 @@ service cloud.firestore {
                           placeholder="Or type custom keywords separated by commas..."
                         />
                         <p className="text-xs text-gray-500 mt-1">
-                          💡 Tap chips above OR type custom keywords like: babosa, khatu, opening
+                          💡 New keywords typed here become tappable chips for future bhajans
                         </p>
                       </div>
 
