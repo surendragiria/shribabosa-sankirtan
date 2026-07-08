@@ -161,6 +161,28 @@ function App() {
   );
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [showDeitiesIndex, setShowDeitiesIndex] = useState(false);
+  
+  // Manageable keyword chips - user can add/remove/reset
+  const DEFAULT_CHIP_KEYWORDS = ['bhawna', 'dance', 'marwari', 'dhamal', 'fast', 'sad', 'celebration', 'punjabi', 'melody', 'mela', 'birthday', 'gujarati', 'filmy', 'folk', 'traditional', 'peaceful'];
+  const [chipKeywords, setChipKeywords] = useState(() => {
+    try {
+      const saved = localStorage.getItem('babosa-chip-keywords');
+      return saved ? JSON.parse(saved) : DEFAULT_CHIP_KEYWORDS;
+    } catch { return DEFAULT_CHIP_KEYWORDS; }
+  });
+  const [showManageChips, setShowManageChips] = useState(false);
+  const [newChipInput, setNewChipInput] = useState('');
+  
+  // View modes for bhajan detail page
+  const [viewMode, setViewMode] = useState(() => 
+    localStorage.getItem('babosa-view-mode') || 'normal'
+  ); // 'normal', 'reading', 'fit'
+  const [fontSize, setFontSize] = useState(() => 
+    parseInt(localStorage.getItem('babosa-font-size') || '18', 10)
+  );
+  const [showViewOptions, setShowViewOptions] = useState(false);
+  const [screenWakeLock, setScreenWakeLock] = useState(null);
+  const [wakeLockActive, setWakeLockActive] = useState(false);
   const recognitionRef = useRef(null);
   const [showMenu, setShowMenu] = useState(false);
   const [activeView, setActiveView] = useState('home');
@@ -432,6 +454,105 @@ function App() {
       console.error('Error saving parodies:', error);
     }
   }, [parodies]);
+  
+  // Save chip keywords to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('babosa-chip-keywords', JSON.stringify(chipKeywords));
+    } catch (error) {
+      console.error('Error saving chip keywords:', error);
+    }
+  }, [chipKeywords]);
+  
+  // Save view mode preference
+  useEffect(() => {
+    localStorage.setItem('babosa-view-mode', viewMode);
+  }, [viewMode]);
+  
+  // Save font size preference
+  useEffect(() => {
+    localStorage.setItem('babosa-font-size', fontSize.toString());
+  }, [fontSize]);
+  
+  // Screen Wake Lock - keeps screen on while viewing a bhajan
+  const requestWakeLock = async () => {
+    if (!('wakeLock' in navigator)) {
+      alert('⚠️ Screen wake lock not supported on this device/browser.\n\nOn iPhone: use iOS 16.4+ Safari/Chrome.\nOn Android: Chrome 84+.');
+      return;
+    }
+    try {
+      const lock = await navigator.wakeLock.request('screen');
+      setScreenWakeLock(lock);
+      setWakeLockActive(true);
+      lock.addEventListener('release', () => {
+        console.log('🔓 Wake lock released');
+        setWakeLockActive(false);
+      });
+      console.log('🔒 Screen wake lock acquired');
+    } catch (err) {
+      console.error('Wake lock error:', err);
+      alert('❌ Could not activate keep-screen-on: ' + err.message);
+    }
+  };
+  
+  const releaseWakeLock = async () => {
+    if (screenWakeLock) {
+      try {
+        await screenWakeLock.release();
+        setScreenWakeLock(null);
+        setWakeLockActive(false);
+      } catch (err) {
+        console.error('Wake lock release error:', err);
+      }
+    }
+  };
+  
+  // Re-acquire wake lock on visibility change (iOS releases it when tab is hidden)
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'visible' && wakeLockActive && !screenWakeLock) {
+        await requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wakeLockActive]);
+  
+  // Auto-release wake lock when no bhajan is being viewed
+  useEffect(() => {
+    if (!selectedBhajan && wakeLockActive) {
+      releaseWakeLock();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBhajan]);
+  
+  // Add a new chip keyword
+  const addChipKeyword = () => {
+    const kw = newChipInput.trim().toLowerCase();
+    if (!kw) return;
+    if (kw.length > 25) {
+      alert('Keyword too long (max 25 characters)');
+      return;
+    }
+    if (chipKeywords.map(k => k.toLowerCase()).includes(kw)) {
+      alert('Keyword already exists in your chip list');
+      return;
+    }
+    setChipKeywords(prev => [...prev, kw]);
+    setNewChipInput('');
+  };
+  
+  // Remove a chip keyword
+  const removeChipKeyword = (kw) => {
+    setChipKeywords(prev => prev.filter(k => k !== kw));
+  };
+  
+  // Reset chip keywords to defaults
+  const resetChipKeywords = () => {
+    if (!window.confirm('Reset chip keywords to defaults?\n\nThis will remove any custom keywords you added.')) return;
+    setChipKeywords(DEFAULT_CHIP_KEYWORDS);
+  };
   
   // Create a new parody
   const createParody = () => {
@@ -3137,6 +3258,280 @@ function App() {
       )}
 
       {/* ============================================ */}
+      {/* VIEW OPTIONS MODAL - Fit / Reading / Screen On / Font Size */}
+      {/* ============================================ */}
+      {showViewOptions && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-md w-full my-4 max-h-[95vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg sm:text-xl font-bold text-amber-900">👁️ View Options</h3>
+                <p className="text-xs text-amber-600 mt-1">Customize how you view the bhajan</p>
+              </div>
+              <button
+                onClick={() => setShowViewOptions(false)}
+                className="p-2 hover:bg-gray-100 rounded-lg flex-shrink-0"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* View Mode Selection */}
+            <div className="mb-4">
+              <label className="block text-sm font-semibold text-amber-800 mb-2">
+                🎨 View Mode
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  onClick={() => setViewMode('normal')}
+                  className={`p-3 rounded-lg border-2 transition-all ${
+                    viewMode === 'normal'
+                      ? 'bg-orange-500 border-orange-600 text-white shadow-md'
+                      : 'bg-white border-orange-200 text-amber-800 hover:bg-orange-50'
+                  }`}
+                >
+                  <div className="text-2xl mb-1">📄</div>
+                  <div className="text-xs font-semibold">Normal</div>
+                </button>
+                <button
+                  onClick={() => {
+                    setViewMode('fit');
+                    // Auto-calculate font size to fit screen
+                    if (selectedBhajan) {
+                      const lines = selectedBhajan.lyrics.split('\n').filter(l => l.trim()).length;
+                      const screenH = window.innerHeight - 200; // reserve for header
+                      const idealSize = Math.floor(screenH / (lines * 1.6));
+                      const bounded = Math.max(14, Math.min(48, idealSize));
+                      setFontSize(bounded);
+                    }
+                  }}
+                  className={`p-3 rounded-lg border-2 transition-all ${
+                    viewMode === 'fit'
+                      ? 'bg-orange-500 border-orange-600 text-white shadow-md'
+                      : 'bg-white border-orange-200 text-amber-800 hover:bg-orange-50'
+                  }`}
+                >
+                  <div className="text-2xl mb-1">📱</div>
+                  <div className="text-xs font-semibold">Fit Screen</div>
+                </button>
+                <button
+                  onClick={() => setViewMode('reading')}
+                  className={`p-3 rounded-lg border-2 transition-all ${
+                    viewMode === 'reading'
+                      ? 'bg-orange-500 border-orange-600 text-white shadow-md'
+                      : 'bg-white border-orange-200 text-amber-800 hover:bg-orange-50'
+                  }`}
+                >
+                  <div className="text-2xl mb-1">📖</div>
+                  <div className="text-xs font-semibold">Reading</div>
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-2 italic">
+                {viewMode === 'normal' && '📄 Standard view with all badges and buttons'}
+                {viewMode === 'fit' && '📱 Font auto-fits to screen height. No scrolling needed for short bhajans.'}
+                {viewMode === 'reading' && '📖 Distraction-free. Hides badges, buttons, and Similar Bhajans.'}
+              </p>
+            </div>
+
+            {/* Font Size Controls */}
+            <div className="mb-4">
+              <label className="block text-sm font-semibold text-amber-800 mb-2">
+                🔤 Font Size: <span className="text-orange-600">{fontSize}px</span>
+              </label>
+              <div className="flex gap-2 items-center">
+                <button
+                  onClick={() => setFontSize(prev => Math.max(12, prev - 2))}
+                  className="w-12 h-12 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded-lg font-bold text-xl transition-colors"
+                  disabled={fontSize <= 12}
+                >
+                  A−
+                </button>
+                <div className="flex-1 h-3 bg-orange-100 rounded-full relative overflow-hidden">
+                  <div 
+                    className="absolute inset-y-0 left-0 bg-gradient-to-r from-orange-400 to-orange-500 rounded-full transition-all"
+                    style={{ width: `${((fontSize - 12) / 32) * 100}%` }}
+                  />
+                </div>
+                <button
+                  onClick={() => setFontSize(prev => Math.min(44, prev + 2))}
+                  className="w-12 h-12 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded-lg font-bold text-xl transition-colors"
+                  disabled={fontSize >= 44}
+                >
+                  A+
+                </button>
+              </div>
+              <div className="flex justify-between text-xs text-gray-500 mt-1">
+                <span>Small (12)</span>
+                <span>Large (44)</span>
+              </div>
+            </div>
+
+            {/* Screen Always On */}
+            <div className="mb-4 bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm font-semibold text-green-900 flex items-center gap-2">
+                  🔦 Keep Screen On
+                </label>
+                <button
+                  onClick={wakeLockActive ? releaseWakeLock : requestWakeLock}
+                  className={`relative inline-flex items-center h-7 w-14 rounded-full transition-colors ${
+                    wakeLockActive ? 'bg-green-500' : 'bg-gray-300'
+                  }`}
+                >
+                  <span
+                    className={`inline-block w-5 h-5 bg-white rounded-full transform transition-transform shadow-md ${
+                      wakeLockActive ? 'translate-x-8' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+              <p className="text-xs text-green-700">
+                {wakeLockActive 
+                  ? '✅ Screen will stay on while viewing this bhajan. Perfect for live singing!'
+                  : 'Prevents screen from sleeping during a program. Requires modern browser.'}
+              </p>
+            </div>
+
+            {/* Done button */}
+            <button
+              onClick={() => setShowViewOptions(false)}
+              className="w-full bg-gradient-to-r from-orange-500 to-amber-500 text-white px-4 py-2.5 rounded-lg font-semibold hover:shadow-lg text-sm"
+            >
+              ✅ Done
+            </button>
+            
+            {viewMode === 'reading' && (
+              <p className="text-xs text-gray-500 mt-3 text-center italic">
+                💡 In Reading mode, use browser back button to return to home
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ============================================ */}
+      {/* MANAGE CHIPS MODAL - Add/Remove keyword chips */}
+      {/* ============================================ */}
+      {showManageChips && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-md w-full my-4 max-h-[95vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg sm:text-xl font-bold text-amber-900">⚙️ Manage Keyword Chips</h3>
+                <p className="text-xs text-amber-600 mt-1">Add or remove chips shown on bhajan pages</p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowManageChips(false);
+                  setNewChipInput('');
+                }}
+                className="p-2 hover:bg-gray-100 rounded-lg flex-shrink-0"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Add new chip */}
+            <div className="mb-4">
+              <label className="block text-sm font-semibold text-amber-800 mb-2">
+                ➕ Add New Chip
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newChipInput}
+                  onChange={(e) => setNewChipInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addChipKeyword();
+                    }
+                  }}
+                  className="flex-1 px-3 py-2 border-2 border-orange-200 rounded-lg focus:ring-2 focus:ring-orange-300 focus:border-orange-400"
+                  placeholder="e.g., khatushyam, jagran"
+                  autoFocus
+                />
+                <button
+                  onClick={addChipKeyword}
+                  disabled={!newChipInput.trim()}
+                  className="px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-lg font-semibold hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Add
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                💡 Press Enter or tap Add
+              </p>
+            </div>
+
+            {/* Current chips list */}
+            <div className="mb-4">
+              <label className="block text-sm font-semibold text-amber-800 mb-2">
+                🏷️ Current Chips ({chipKeywords.length})
+              </label>
+              {chipKeywords.length === 0 ? (
+                <div className="text-center py-8 bg-gray-50 rounded-lg">
+                  <p className="text-gray-500 text-sm">No chips yet. Add some above!</p>
+                </div>
+              ) : (
+                <div className="bg-orange-50 rounded-lg p-3 border border-orange-200">
+                  <div className="flex flex-wrap gap-2">
+                    {chipKeywords.map(kw => (
+                      <div
+                        key={kw}
+                        className="inline-flex items-center gap-1 bg-white border border-orange-300 rounded-full px-3 py-1 text-sm"
+                      >
+                        <span className="text-amber-800 font-medium">{kw}</span>
+                        <button
+                          onClick={() => removeChipKeyword(kw)}
+                          className="text-red-500 hover:text-red-700 hover:bg-red-50 rounded-full w-5 h-5 flex items-center justify-center transition-colors"
+                          title={`Remove "${kw}"`}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Reset button */}
+            <div className="border-t border-orange-100 pt-3">
+              <button
+                onClick={resetChipKeywords}
+                className="w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-lg font-semibold hover:bg-gray-200 transition-colors text-sm flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Reset to Default 16 Chips
+              </button>
+              <p className="text-xs text-gray-500 mt-2 text-center italic">
+                Defaults: bhawna, dance, marwari, dhamal, fast, sad, celebration, punjabi, melody, mela, birthday, gujarati, filmy, folk, traditional, peaceful
+              </p>
+            </div>
+
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={() => {
+                  setShowManageChips(false);
+                  setNewChipInput('');
+                }}
+                className="w-full bg-gradient-to-r from-orange-500 to-amber-500 text-white px-4 py-2.5 rounded-lg font-semibold hover:shadow-lg text-sm"
+              >
+                ✅ Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================ */}
       {/* PARODIES LIST MODAL */}
       {/* ============================================ */}
       {showParodiesList && !selectedParody && (
@@ -3889,7 +4284,7 @@ service cloud.firestore {
               );
             })()}
             
-            <div className="mb-4 sm:mb-6 flex items-center justify-between gap-2 bg-white/80 backdrop-blur-md rounded-xl shadow-md p-2 sm:p-3">
+            <div className={`mb-4 sm:mb-6 flex items-center justify-between gap-2 bg-white/80 backdrop-blur-md rounded-xl shadow-md p-2 sm:p-3 ${viewMode === 'reading' ? 'hidden' : ''}`}>
               <div className="flex items-center gap-1 sm:gap-2">
                 <button
                   onClick={() => setShowMenu(true)}
@@ -3913,16 +4308,38 @@ service cloud.firestore {
                 </button>
               </div>
               
-              <button
-                onClick={navigateToHome}
-                className="flex items-center bg-orange-500 hover:bg-orange-600 text-white transition-colors py-2 px-3 sm:px-4 rounded-lg text-sm sm:text-base font-semibold shadow-md"
-                title="Go to Home"
-              >
-                <svg className="w-5 h-5 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-                </svg>
-                <span className="hidden sm:inline">Home</span>
+              <div className="flex items-center gap-1 sm:gap-2">
+                {/* Wake Lock indicator */}
+                {wakeLockActive && (
+                  <span className="hidden sm:flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-semibold" title="Screen will stay on">
+                    🔦 Screen On
+                  </span>
+                )}
+                
+                {/* View Options button */}
+                <button
+                  onClick={() => setShowViewOptions(true)}
+                  className="flex items-center bg-purple-500 hover:bg-purple-600 text-white transition-colors py-2 px-2 sm:px-3 rounded-lg text-sm sm:text-base font-semibold shadow-md"
+                  title="View Options"
+                >
+                  <svg className="w-5 h-5 sm:mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                  <span className="hidden sm:inline">View</span>
+                </button>
+                
+                <button
+                  onClick={navigateToHome}
+                  className="flex items-center bg-orange-500 hover:bg-orange-600 text-white transition-colors py-2 px-3 sm:px-4 rounded-lg text-sm sm:text-base font-semibold shadow-md"
+                  title="Go to Home"
+                >
+                  <svg className="w-5 h-5 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                  </svg>
+                  <span className="hidden sm:inline">Home</span>
               </button>
+              </div>
             </div>
 
             <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-4 sm:p-8">
@@ -3940,7 +4357,7 @@ service cloud.firestore {
                   </div>
                 )}
                 
-                <div className="flex flex-wrap gap-2 sm:gap-3 mb-4 sm:mb-6">
+                <div className={`flex flex-wrap gap-2 sm:gap-3 mb-4 sm:mb-6 ${viewMode === 'reading' ? 'hidden' : ''}`}>
                   {selectedBhajan.deity && (
                     <span className="bg-purple-100 text-purple-800 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full text-xs sm:text-sm font-medium">
                       🙏 {selectedBhajan.deity}
@@ -4036,12 +4453,21 @@ service cloud.firestore {
               </div>
 
               <div className="mb-6 sm:mb-8">
-                <div className="bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl p-4 sm:p-6">
-                  <div className="text-base sm:text-lg leading-relaxed text-amber-900 font-medium">
+                <div className={viewMode === 'reading' 
+                  ? "bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl p-4 sm:p-6"
+                  : "bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl p-4 sm:p-6"
+                }>
+                  <div 
+                    className="leading-relaxed text-amber-900 font-medium"
+                    style={{ 
+                      fontSize: `${fontSize}px`,
+                      lineHeight: viewMode === 'fit' ? '1.4' : '1.6'
+                    }}
+                  >
                     {selectedBhajan.lyrics.split('\n').map((line, idx) => {
                       const trimmed = line.trim();
                       if (trimmed === '') {
-                        return <div key={idx} className="h-3 sm:h-4" />;
+                        return <div key={idx} style={{ height: viewMode === 'fit' ? `${fontSize * 0.4}px` : `${fontSize * 0.7}px` }} />;
                       }
                       return (
                         <div 
@@ -4057,7 +4483,7 @@ service cloud.firestore {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:flex sm:flex-wrap sm:justify-center gap-2 sm:gap-4 mt-6 sm:mt-8">
+              <div className={`grid grid-cols-2 sm:flex sm:flex-wrap sm:justify-center gap-2 sm:gap-4 mt-6 sm:mt-8 ${viewMode === 'reading' ? 'hidden' : ''}`}>
                 <button
                   onClick={() => editBhajan(selectedBhajan)}
                   className="flex items-center justify-center bg-amber-500 hover:bg-amber-600 text-white px-3 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold transition-colors text-sm sm:text-base"
@@ -4146,8 +4572,8 @@ service cloud.firestore {
                 </button>
               </div>
 
-              {/* Similar Bhajans Section */}
-              {(() => {
+              {/* Similar Bhajans Section - hidden in reading mode */}
+              {viewMode !== 'reading' && (() => {
                 const similar = getSimilarBhajans(selectedBhajan);
                 if (similar.length === 0) return null;
                 
@@ -4528,79 +4954,64 @@ service cloud.firestore {
                           Keywords 🏷️
                         </label>
                         
-                        {/* Tappable Quick Keywords Chips - Default + Auto-collected from collection */}
+                        {/* Tappable Quick Keywords Chips - Manageable list */}
                         <div className="mb-2 bg-orange-50 rounded-lg p-2 border border-orange-200">
-                          <p className="text-xs text-amber-700 mb-2 font-medium">💡 Tap to add:</p>
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-xs text-amber-700 font-medium">💡 Tap to add:</p>
+                            <button
+                              type="button"
+                              onClick={() => setShowManageChips(true)}
+                              className="text-xs text-orange-600 hover:text-orange-800 font-semibold flex items-center gap-1"
+                              title="Add or remove keyword chips"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              </svg>
+                              Manage
+                            </button>
+                          </div>
                           <div className="flex flex-wrap gap-1.5">
-                            {(() => {
-                              // Default seed keywords (always shown)
-                              const defaultKeywords = ['bhawna', 'dance', 'marwari', 'dhamal', 'fast', 'sad', 'celebration', 'punjabi', 'melody', 'mela', 'birthday', 'gujarati', 'filmy', 'folk', 'traditional', 'peaceful'];
-                              
-                              // Auto-collect all keywords used across all bhajans
-                              const collectedKeywords = new Set();
-                              bhajans.forEach(b => {
-                                if (b.keywords) {
-                                  b.keywords.split(',').forEach(kw => {
-                                    const cleaned = kw.trim().toLowerCase();
-                                    // Filter: skip too short/long, numeric, or empty
-                                    if (cleaned.length >= 2 && cleaned.length <= 25 && !/^\d+$/.test(cleaned)) {
-                                      collectedKeywords.add(cleaned);
-                                    }
-                                  });
-                                }
-                              });
-                              
-                              // Merge: defaults first (in order), then any NEW collected keywords
-                              const defaultSet = new Set(defaultKeywords.map(k => k.toLowerCase()));
-                              const extras = [...collectedKeywords]
-                                .filter(k => !defaultSet.has(k))
-                                .sort(); // Alphabetize the extras
-                              
-                              const allChips = [...defaultKeywords, ...extras];
-                              
-                              return allChips.map(kw => {
-                                const currentKeywords = (editingBhajan ? editingBhajan.keywords : newBhajan.keywords) || '';
-                                const kwList = currentKeywords.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
-                                const isSelected = kwList.includes(kw.toLowerCase());
-                                const isDefault = defaultSet.has(kw.toLowerCase());
-                                return (
-                                  <button
-                                    key={kw}
-                                    type="button"
-                                    onClick={() => {
-                                      if (isSelected) {
-                                        const newList = kwList.filter(k => k !== kw.toLowerCase());
-                                        const newValue = newList.join(', ');
-                                        if (editingBhajan) {
-                                          setEditingBhajan(prev => ({...prev, keywords: newValue}));
-                                        } else {
-                                          setNewBhajan(prev => ({...prev, keywords: newValue}));
-                                        }
+                            {chipKeywords.length === 0 ? (
+                              <p className="text-xs text-gray-500 italic py-1">No chips. Tap "Manage" to add some.</p>
+                            ) : chipKeywords.map(kw => {
+                              const currentKeywords = (editingBhajan ? editingBhajan.keywords : newBhajan.keywords) || '';
+                              const kwList = currentKeywords.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+                              const isSelected = kwList.includes(kw.toLowerCase());
+                              return (
+                                <button
+                                  key={kw}
+                                  type="button"
+                                  onClick={() => {
+                                    if (isSelected) {
+                                      const newList = kwList.filter(k => k !== kw.toLowerCase());
+                                      const newValue = newList.join(', ');
+                                      if (editingBhajan) {
+                                        setEditingBhajan(prev => ({...prev, keywords: newValue}));
                                       } else {
-                                        const newValue = currentKeywords.trim() 
-                                          ? currentKeywords.trim().replace(/,\s*$/, '') + ', ' + kw
-                                          : kw;
-                                        if (editingBhajan) {
-                                          setEditingBhajan(prev => ({...prev, keywords: newValue}));
-                                        } else {
-                                          setNewBhajan(prev => ({...prev, keywords: newValue}));
-                                        }
+                                        setNewBhajan(prev => ({...prev, keywords: newValue}));
                                       }
-                                    }}
-                                    className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all ${
-                                      isSelected
-                                        ? 'bg-orange-500 text-white shadow-md scale-105'
-                                        : isDefault
-                                          ? 'bg-white text-amber-800 border border-orange-300 hover:bg-orange-100 hover:border-orange-400'
-                                          : 'bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 hover:border-amber-400 italic'
-                                    }`}
-                                    title={isDefault ? 'Default keyword' : 'Custom keyword from your collection'}
-                                  >
-                                    {isSelected ? '✓ ' : '+ '}{kw}
-                                  </button>
-                                );
-                              });
-                            })()}
+                                    } else {
+                                      const newValue = currentKeywords.trim() 
+                                        ? currentKeywords.trim().replace(/,\s*$/, '') + ', ' + kw
+                                        : kw;
+                                      if (editingBhajan) {
+                                        setEditingBhajan(prev => ({...prev, keywords: newValue}));
+                                      } else {
+                                        setNewBhajan(prev => ({...prev, keywords: newValue}));
+                                      }
+                                    }
+                                  }}
+                                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all ${
+                                    isSelected
+                                      ? 'bg-orange-500 text-white shadow-md scale-105'
+                                      : 'bg-white text-amber-800 border border-orange-300 hover:bg-orange-100 hover:border-orange-400'
+                                  }`}
+                                >
+                                  {isSelected ? '✓ ' : '+ '}{kw}
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                         
@@ -4615,7 +5026,7 @@ service cloud.firestore {
                           placeholder="Or type custom keywords separated by commas..."
                         />
                         <p className="text-xs text-gray-500 mt-1">
-                          💡 New keywords typed here become tappable chips for future bhajans
+                          💡 Tap "Manage" above to add more chips to the list
                         </p>
                       </div>
 
@@ -4839,6 +5250,21 @@ service cloud.firestore {
         >
           <svg className="w-6 h-6 sm:w-7 sm:h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+          </svg>
+        </button>
+      )}
+      
+      {/* Floating View Options button in reading mode */}
+      {selectedBhajan && viewMode === 'reading' && (
+        <button
+          onClick={() => setShowViewOptions(true)}
+          className="fixed bottom-6 right-6 z-40 bg-purple-500 hover:bg-purple-600 text-white w-12 h-12 sm:w-14 sm:h-14 rounded-full shadow-2xl hover:shadow-purple-500/50 transition-all duration-300 flex items-center justify-center"
+          title="View Options"
+          aria-label="View options"
+        >
+          <svg className="w-6 h-6 sm:w-7 sm:h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
           </svg>
         </button>
       )}
