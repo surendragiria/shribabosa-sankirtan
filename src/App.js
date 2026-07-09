@@ -1181,89 +1181,191 @@ function App() {
     'babosa': 'बाबोसा', 'sankirtan': 'संकीर्तन'
   };
 
-  // Phonetic rules for unknown words (fallback)
-  const transliterateWord = (word) => {
-    if (!word) return word;
-    const lower = word.toLowerCase();
-    
-    // Check dictionary first
-    if (hindiTransliterationMap[lower]) {
-      return hindiTransliterationMap[lower];
+  // Google Input Tools API integration for Hindi transliteration
+  // Uses inputtools.google.com/request endpoint (returns Hindi options for English text)
+  const [transliterationSuggestions, setTransliterationSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [currentWord, setCurrentWord] = useState('');
+  const [suggestionsCache, setSuggestionsCache] = useState({});
+  const suggestionsAbortRef = useRef(null);
+  
+  // Fetch transliteration suggestions from Google Input Tools API
+  const fetchGoogleSuggestions = async (word) => {
+    if (!word || word.length < 1) {
+      setTransliterationSuggestions([]);
+      return;
     }
     
-    // Return as-is if not found (user can manually fix)
-    return word;
-  };
-
-  // Transliterate full text - called on spacebar press
-  const transliterateOnSpace = (text, cursorPos) => {
-    // Find the word just before the cursor (between cursor and last space/newline)
-    let startIdx = cursorPos - 1;
-    while (startIdx > 0 && !/[\s\n]/.test(text[startIdx - 1])) {
-      startIdx--;
+    // Check cache first
+    if (suggestionsCache[word.toLowerCase()]) {
+      setTransliterationSuggestions(suggestionsCache[word.toLowerCase()]);
+      return;
     }
     
-    const wordToTransliterate = text.substring(startIdx, cursorPos).trim();
-    if (!wordToTransliterate || !/^[a-zA-Z]+$/.test(wordToTransliterate)) {
-      return { text, newCursorPos: cursorPos + 1 };
+    // Abort any pending request
+    if (suggestionsAbortRef.current) {
+      suggestionsAbortRef.current.abort();
     }
     
-    const translated = transliterateWord(wordToTransliterate);
-    if (translated === wordToTransliterate) {
-      return { text, newCursorPos: cursorPos + 1 };
-    }
+    const controller = new AbortController();
+    suggestionsAbortRef.current = controller;
     
-    const newText = text.substring(0, startIdx) + translated + text.substring(cursorPos);
-    const newCursorPos = startIdx + translated.length + 1;
-    return { text: newText, newCursorPos };
-  };
-
-  // Handle lyrics input with optional transliteration
-  const handleLyricsChange = (e, isEditing) => {
-    const value = e.target.value;
-    const cursorPos = e.target.selectionStart;
-    
-    // If Hindi typing is off, just update normally
-    if (!hindiTypingEnabled) {
-      if (isEditing) {
-        setEditingBhajan(prev => ({ ...prev, lyrics: value }));
+    try {
+      // Google Input Tools API endpoint
+      const url = `https://inputtools.google.com/request?text=${encodeURIComponent(word)}&itc=hi-t-i0-und&num=5&cp=0&cs=1&ie=utf-8&oe=utf-8`;
+      const response = await fetch(url, { signal: controller.signal });
+      const data = await response.json();
+      
+      // Response format: ["SUCCESS", [["word", ["hindi1", "hindi2", ...]]]]
+      if (data && data[0] === 'SUCCESS' && data[1] && data[1][0] && data[1][0][1]) {
+        const suggestions = data[1][0][1].slice(0, 5);
+        setTransliterationSuggestions(suggestions);
+        // Cache the result
+        setSuggestionsCache(prev => ({ ...prev, [word.toLowerCase()]: suggestions }));
       } else {
-        setNewBhajan(prev => ({ ...prev, lyrics: value }));
+        setTransliterationSuggestions([]);
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        console.log('Transliteration fetch error:', err.message);
+        // Fallback: use local map if API fails
+        const fallback = hindiTransliterationMap[word.toLowerCase()];
+        if (fallback) {
+          setTransliterationSuggestions([fallback]);
+        } else {
+          setTransliterationSuggestions([]);
+        }
+      }
+    }
+  };
+  
+  // Handle key events for triggering transliteration
+  const handleGoogleTypingKeyDown = (e, isEditing) => {
+    if (!hindiTypingEnabled) return;
+    
+    // Space, Enter, or period triggers word replacement
+    if (e.key === ' ' || e.key === 'Enter' || e.key === '.') {
+      const target = e.target;
+      const cursorPos = target.selectionStart;
+      const value = target.value;
+      
+      // Find the word being typed (from start of word to cursor)
+      let wordStart = cursorPos - 1;
+      while (wordStart > 0 && value[wordStart - 1] !== ' ' && value[wordStart - 1] !== '\n') {
+        wordStart--;
+      }
+      const currentWordText = value.substring(wordStart, cursorPos);
+      
+      // Only convert if word looks like English (contains ASCII letters)
+      if (currentWordText && /^[a-zA-Z]+$/.test(currentWordText)) {
+        const cachedSuggestions = suggestionsCache[currentWordText.toLowerCase()];
+        if (cachedSuggestions && cachedSuggestions.length > 0) {
+          e.preventDefault();
+          // Use first suggestion (most likely)
+          const replacement = cachedSuggestions[0];
+          const newValue = value.substring(0, wordStart) + replacement + (e.key === '.' ? '.' : (e.key === 'Enter' ? '\n' : ' ')) + value.substring(cursorPos);
+          
+          if (isEditing) {
+            setEditingBhajan(prev => ({ ...prev, lyrics: newValue }));
+          } else {
+            setNewBhajan(prev => ({ ...prev, lyrics: newValue }));
+          }
+          
+          setShowSuggestions(false);
+          setCurrentWord('');
+          
+          // Restore cursor position
+          setTimeout(() => {
+            const newCursor = wordStart + replacement.length + 1;
+            target.selectionStart = newCursor;
+            target.selectionEnd = newCursor;
+          }, 0);
+          return;
+        }
+      }
+      // Otherwise let space fall through
+      setShowSuggestions(false);
+    } else if (e.key === 'Escape') {
+      setShowSuggestions(false);
+    }
+  };
+  
+  // Track currently typing word to fetch suggestions
+  const handleGoogleTypingInput = (e, isEditing) => {
+    if (!hindiTypingEnabled) {
+      // Just do a normal update
+      if (isEditing) {
+        setEditingBhajan(prev => ({ ...prev, lyrics: e.target.value }));
+      } else {
+        setNewBhajan(prev => ({ ...prev, lyrics: e.target.value }));
       }
       return;
     }
     
-    // Hindi typing is on - check if user just typed a space
-    const prevValue = isEditing ? editingBhajan.lyrics : newBhajan.lyrics;
-    const justTypedSpace = value.length > prevValue.length && value[cursorPos - 1] === ' ';
+    const value = e.target.value;
+    const cursorPos = e.target.selectionStart;
     
-    if (justTypedSpace) {
-      // Transliterate the word just typed
-      const textBeforeSpace = value.substring(0, cursorPos - 1);
-      const result = transliterateOnSpace(textBeforeSpace, cursorPos - 1);
-      const newValue = result.text + ' ' + value.substring(cursorPos);
-      
-      if (isEditing) {
-        setEditingBhajan(prev => ({ ...prev, lyrics: newValue }));
-      } else {
-        setNewBhajan(prev => ({ ...prev, lyrics: newValue }));
-      }
-      
-      // Restore cursor position after React re-renders
-      setTimeout(() => {
-        if (e.target) {
-          e.target.selectionStart = result.newCursorPos;
-          e.target.selectionEnd = result.newCursorPos;
-        }
-      }, 0);
+    // Update state normally
+    if (isEditing) {
+      setEditingBhajan(prev => ({ ...prev, lyrics: value }));
     } else {
-      // Normal typing - just update
-      if (isEditing) {
-        setEditingBhajan(prev => ({ ...prev, lyrics: value }));
-      } else {
-        setNewBhajan(prev => ({ ...prev, lyrics: value }));
-      }
+      setNewBhajan(prev => ({ ...prev, lyrics: value }));
     }
+    
+    // Find current word being typed
+    let wordStart = cursorPos;
+    while (wordStart > 0 && value[wordStart - 1] !== ' ' && value[wordStart - 1] !== '\n') {
+      wordStart--;
+    }
+    const wordText = value.substring(wordStart, cursorPos);
+    
+    // Only fetch suggestions for English words
+    if (wordText && /^[a-zA-Z]+$/.test(wordText) && wordText.length >= 1) {
+      setCurrentWord(wordText);
+      // Debounced fetch
+      if (suggestionsAbortRef.current) {
+        clearTimeout(suggestionsAbortRef.current.timerId);
+      }
+      const timerId = setTimeout(() => fetchGoogleSuggestions(wordText), 200);
+      suggestionsAbortRef.current = { abort: () => clearTimeout(timerId), timerId };
+      setShowSuggestions(true);
+    } else {
+      setShowSuggestions(false);
+      setCurrentWord('');
+    }
+  };
+  
+  // Manually apply a suggestion (when user taps one)
+  const applySuggestion = (suggestion, isEditing) => {
+    const target = document.getElementById(isEditing ? 'lyrics-textarea-edit' : 'lyrics-textarea-new');
+    if (!target) return;
+    
+    const cursorPos = target.selectionStart;
+    const value = target.value;
+    
+    // Find word boundaries
+    let wordStart = cursorPos;
+    while (wordStart > 0 && value[wordStart - 1] !== ' ' && value[wordStart - 1] !== '\n') {
+      wordStart--;
+    }
+    
+    const newValue = value.substring(0, wordStart) + suggestion + ' ' + value.substring(cursorPos);
+    
+    if (isEditing) {
+      setEditingBhajan(prev => ({ ...prev, lyrics: newValue }));
+    } else {
+      setNewBhajan(prev => ({ ...prev, lyrics: newValue }));
+    }
+    
+    setShowSuggestions(false);
+    setCurrentWord('');
+    
+    setTimeout(() => {
+      target.focus();
+      const newCursor = wordStart + suggestion.length + 1;
+      target.selectionStart = newCursor;
+      target.selectionEnd = newCursor;
+    }, 0);
   };
 
 
@@ -4856,24 +4958,57 @@ service cloud.firestore {
                         {hindiTypingEnabled && (
                           <div className="mb-2 p-2 bg-orange-50 border border-orange-200 rounded-lg">
                             <p className="text-xs text-orange-800">
-                              ✨ <strong>Hindi typing enabled!</strong> Type in English, press <kbd className="bg-white px-1.5 py-0.5 rounded border text-xs">space</kbd> to convert.
+                              ✨ <strong>Google Input Tools active!</strong> Type in English, press <kbd className="bg-white px-1.5 py-0.5 rounded border text-xs">space</kbd> for auto-convert, or tap a suggestion below.
                             </p>
                             <p className="text-xs text-orange-600 mt-1">
-                              Examples: <code className="bg-white px-1 rounded">ram</code> → राम, <code className="bg-white px-1 rounded">krishna</code> → कृष्ण, <code className="bg-white px-1 rounded">jai</code> → जय
+                              Full Google transliteration — same as gmail.google.com/hindi
                             </p>
                           </div>
                         )}
                         
-                        <textarea
-                          value={editingBhajan ? editingBhajan.lyrics : newBhajan.lyrics}
-                          onChange={(e) => handleLyricsChange(e, !!editingBhajan)}
-                          rows={12}
-                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400 font-mono text-base"
-                          placeholder={hindiTypingEnabled 
-                            ? "Type: jai shri ram krishna govind... (press space to convert)" 
-                            : "पूर्ण भजन के बोल यहाँ लिखें..."}
-                          style={{ lineHeight: '1.8' }}
-                        />
+                        <div className="relative">
+                          <textarea
+                            id={editingBhajan ? 'lyrics-textarea-edit' : 'lyrics-textarea-new'}
+                            value={editingBhajan ? editingBhajan.lyrics : newBhajan.lyrics}
+                            onChange={(e) => handleGoogleTypingInput(e, !!editingBhajan)}
+                            onKeyDown={(e) => handleGoogleTypingKeyDown(e, !!editingBhajan)}
+                            onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                            rows={12}
+                            className="w-full px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400 font-mono text-base"
+                            placeholder={hindiTypingEnabled 
+                              ? "Type: jai shri ram krishna govind... (press space to convert)" 
+                              : "पूर्ण भजन के बोल यहाँ लिखें..."}
+                            style={{ lineHeight: '1.8' }}
+                          />
+                          
+                          {/* Google Input Tools Suggestions Popup */}
+                          {hindiTypingEnabled && showSuggestions && transliterationSuggestions.length > 0 && (
+                            <div className="mt-1 bg-white border-2 border-orange-300 rounded-lg shadow-lg p-2 flex flex-wrap gap-2 items-center">
+                              <span className="text-xs text-gray-500 mr-1">
+                                <strong>"{currentWord}"</strong> →
+                              </span>
+                              {transliterationSuggestions.map((suggestion, idx) => (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  onMouseDown={(e) => {
+                                    e.preventDefault(); // Prevent blur
+                                    applySuggestion(suggestion, !!editingBhajan);
+                                  }}
+                                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                                    idx === 0
+                                      ? 'bg-orange-500 text-white hover:bg-orange-600 shadow-md'
+                                      : 'bg-orange-100 text-amber-800 hover:bg-orange-200'
+                                  }`}
+                                  title={idx === 0 ? 'Default suggestion (press space)' : `Suggestion ${idx + 1}`}
+                                >
+                                  {idx === 0 && '⭐ '}{suggestion}
+                                </button>
+                              ))}
+                              <span className="text-xs text-gray-400 ml-auto">Press space to accept</span>
+                            </div>
+                          )}
+                        </div>
                         
                         {/* Character/line counter */}
                         <div className="mt-1 flex justify-between text-xs text-gray-500">
