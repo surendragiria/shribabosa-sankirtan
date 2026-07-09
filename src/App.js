@@ -2089,69 +2089,6 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bhajans, searchTerm, filterCategory, filterDeity, filterMood]);
 
-  // Compute popular keywords from all bhajans for quick search dropdown
-  // Compute popular keywords from titles, deities, and explicit keywords for quick search
-  const popularKeywords = React.useMemo(() => {
-    const keywordMap = {};
-    
-    // Common words to exclude (stop words in Hindi and English)
-    const stopWords = new Set([
-      'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
-      'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'has',
-      'have', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
-      'may', 'might', 'must', 'shall', 'can', 'cannot', 'this', 'that', 'these',
-      'those', 'i', 'me', 'my', 'we', 'our', 'you', 'your', 'he', 'she', 'it',
-      'they', 'them', 'their', 'अ', 'क', 'ग', 'च', 'ज', 'त', 'द', 'न', 'प', 'ब',
-      'भ', 'म', 'य', 'र', 'ल', 'व', 'श', 'स', 'ह', 'और', 'है', 'हैं', 'का', 'की',
-      'के', 'को', 'से', 'में', 'पर', 'भी', 'ही', 'तो', 'जो', 'यह', 'वह', 'मैं',
-      'तू', 'हम', 'तुम', 'आप', 'मेरे', 'तेरे', 'उसके', 'उनके'
-    ]);
-    
-    const addWord = (word, weight = 1) => {
-      const cleaned = word.trim().toLowerCase();
-      // Skip if too short, too long, a number, or stop word
-      if (cleaned.length < 2 || cleaned.length > 25) return;
-      if (stopWords.has(cleaned)) return;
-      if (/^\d+$/.test(cleaned)) return;
-      keywordMap[cleaned] = (keywordMap[cleaned] || 0) + weight;
-    };
-    
-    bhajans.forEach(bhajan => {
-      // Explicit keywords get highest weight (3x)
-      if (bhajan.keywords) {
-        bhajan.keywords.split(',').forEach(kw => {
-          addWord(kw, 3);
-        });
-      }
-      
-      // Title words get high weight (2x)
-      if (bhajan.title) {
-        // Split on spaces and common punctuation
-        bhajan.title.split(/[\s,।:|/\-—]+/).forEach(w => {
-          addWord(w, 2);
-        });
-      }
-      
-      // Deity gets weight 2
-      if (bhajan.deity) {
-        addWord(bhajan.deity, 2);
-      }
-      
-      // Author and category get weight 1
-      if (bhajan.author) {
-        bhajan.author.split(/\s+/).forEach(w => addWord(w, 1));
-      }
-      if (bhajan.category) {
-        addWord(bhajan.category, 1);
-      }
-    });
-    
-    return Object.entries(keywordMap)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 30)
-      .map(([keyword]) => keyword);
-  }, [bhajans]);
-
   // Handle keyword selection from dropdown
   const handleKeywordSelect = (e) => {
     const selected = e.target.value;
@@ -2340,21 +2277,21 @@ function App() {
               )}
             </div>
 
-            {/* Quick Keywords Dropdown */}
+            {/* Quick Keywords Dropdown - uses your managed chip list */}
             <select
               value=""
               onChange={handleKeywordSelect}
               className="px-3 py-2 border-2 border-orange-200 rounded-xl focus:ring-4 focus:ring-orange-300/50 focus:border-orange-400 bg-white text-sm sm:text-base sm:w-48 cursor-pointer"
             >
               <option value="">🏷️ Quick Keywords</option>
-              {popularKeywords.length > 0 ? (
-                popularKeywords.map(keyword => (
+              {chipKeywords.length > 0 ? (
+                chipKeywords.map(keyword => (
                   <option key={keyword} value={keyword}>
                     {keyword}
                   </option>
                 ))
               ) : (
-                <option value="" disabled>No keywords yet</option>
+                <option value="" disabled>No keywords yet - Tap Manage on bhajan form</option>
               )}
             </select>
           </div>
@@ -5105,15 +5042,15 @@ service cloud.firestore {
                 </button>
               </div>
 
-              {/* Quick filter chips for popular keywords - Mobile friendly scrollable */}
-              {popularKeywords.length > 0 && (
+              {/* Quick filter chips - uses your managed chip list */}
+              {chipKeywords.length > 0 && (
                 <div className="mt-3 overflow-x-auto">
                   <div className="flex gap-2 pb-2" style={{ minWidth: 'min-content' }}>
-                    <span className="text-xs text-amber-700 self-center whitespace-nowrap">🏷️ Popular:</span>
-                    {popularKeywords.slice(0, 10).map(keyword => (
+                    <span className="text-xs text-amber-700 self-center whitespace-nowrap">🏷️ Quick:</span>
+                    {chipKeywords.map(keyword => (
                       <button
                         key={keyword}
-                        onClick={() => setSearchTerm(keyword)}
+                        onClick={() => setSearchTerm(searchTerm === keyword ? '' : keyword)}
                         className={`px-3 py-1 rounded-full text-xs whitespace-nowrap transition-colors ${
                           searchTerm === keyword
                             ? 'bg-orange-500 text-white'
